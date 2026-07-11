@@ -12,6 +12,7 @@ from pathlib import Path
 
 from browser import browser_session, sign_out_session, signup_on_page, warm_profile
 from config import DEFAULT_CONFIG_PATH, load_config, with_worker_profile
+from cpa_output import ensure_cpa_dependencies, resolve_cpa_output_dir, sso_to_cpa_file
 from helpers import (
     append_account_csv,
     build_email,
@@ -26,6 +27,43 @@ _print_lock = threading.Lock()
 def _log(msg: str) -> None:
     with _print_lock:
         print(msg, flush=True)
+
+
+def _save_account_product(
+    cfg,
+    *,
+    email: str,
+    password: str,
+    sso: str,
+    last_name: str,
+    first_name: str,
+    tag: str,
+) -> str:
+    """
+    按 [output].type 落盘产物。返回用于日志的「保存目标」描述。
+    cpa 失败会抛异常（本轮计失败，不登出由调用方决定——仍应登出以免污染会话）。
+    """
+    sso_preview = f"{sso[:12]}…{sso[-6:]}" if len(sso) > 22 else sso
+    base_summary = (
+        f"{email} / {password} / SSO={sso_preview} / "
+        f"姓={last_name} / 名={first_name}"
+    )
+
+    if cfg.output_type == "cpa":
+        out_dir = cfg.output_path
+        if not (out_dir or "").strip():
+            raise RuntimeError("cpa 模式缺少 output_path（运行时应已解析默认目录）")
+        _log(f"{tag} [信息] SSO 已拿到，开始 Device Flow → CPA JSON…")
+        cpa_path = sso_to_cpa_file(sso, email, out_dir)
+        _log(f"{tag} [完成] 已保存 CPA → {cpa_path} | {base_summary}")
+        return str(cpa_path)
+
+    # 默认 csv
+    append_account_csv(
+        cfg.csv_path, email, password, sso, last_name, first_name
+    )
+    _log(f"{tag} [完成] 已保存 → {cfg.csv_path} | {base_summary}")
+    return cfg.csv_path
 
 
 def _register_one_on_page(
@@ -52,6 +90,7 @@ def _register_one_on_page(
         _log(f"{tag} 已获取验证码：{code}")
         return code
 
+    sso_got = False
     try:
         # 先完成注册并拿到 SSO；sign_out=False，等写盘成功后再正式登出
         sso = signup_on_page(
@@ -66,24 +105,33 @@ def _register_one_on_page(
         )
         if not (sso or "").strip():
             raise RuntimeError("未获取到有效 SSO，本轮不登出、不写盘")
+        sso_got = True
 
-        append_account_csv(
-            cfg.csv_path, email, password, sso, last_name, first_name
+        saved = _save_account_product(
+            cfg,
+            email=email,
+            password=password,
+            sso=sso,
+            last_name=last_name,
+            first_name=first_name,
+            tag=tag,
         )
-        sso_preview = f"{sso[:12]}…{sso[-6:]}" if len(sso) > 22 else sso
-        summary = (
-            f"{email} / {password} / SSO={sso_preview} / "
-            f"姓={last_name} / 名={first_name}"
-        )
-        _log(f"{tag} [完成] 已保存 → {cfg.csv_path} | {summary}")
+        summary = f"{email} → {saved}"
 
-        # SSO 已落盘后才正式登出，避免未拿到/未保存 SSO 就清会话
-        _log(f"{tag} [信息] SSO 已保存，开始正式登出…")
+        # 产物已落盘后才正式登出
+        _log(f"{tag} [信息] 产物已保存，开始正式登出…")
         sign_out_session(page, cfg)
         page.wait_for_timeout(max(0, cfg.between_rounds_ms))
         return True, summary
     except Exception as exc:
         _log(f"{tag} [失败] {exc}")
+        # 已拿到 SSO 但写盘/CPA 失败：仍登出，避免污染下一轮
+        if sso_got:
+            try:
+                _log(f"{tag} [信息] 写盘失败后尝试登出以清理会话…")
+                sign_out_session(page, cfg)
+            except Exception as logout_exc:
+                _log(f"{tag} [警告] 失败后登出异常：{logout_exc}")
         return False, str(exc)
 
 
@@ -149,14 +197,24 @@ def run_batch(
 
     cfg = replace(cfg, total=total_n, workers=workers_n)
 
+    # cpa：先校验依赖，再解析本批统一输出目录（配置 path 或自动 yyyyMMdd-HHmm-{序号}）
+    if cfg.output_type == "cpa":
+        ensure_cpa_dependencies()
+        cpa_dir = resolve_cpa_output_dir(cfg.output_path)
+        cfg = replace(cfg, output_path=str(cpa_dir))
+
     _log(f"[信息] 已加载配置：{Path(config_path).resolve()}")
     _log(
         f"[信息] 邮箱域名={cfg.email_domain} duckmail={cfg.duckmail_address} "
         f"轮询间隔={cfg.poll_interval_sec}s 超时={cfg.poll_timeout_sec}s"
     )
+    if cfg.output_type == "cpa":
+        out_desc = f"type=cpa dir={cfg.output_path} 文件=grok-{{email}}.json"
+    else:
+        out_desc = f"type=csv file={cfg.csv_path}"
     _log(
         f"[信息] 计划注册总数={total_n} 并发={workers_n} "
-        f"（每 worker 复用同一浏览器） CSV={cfg.csv_path}"
+        f"（每 worker 复用同一浏览器） 输出={out_desc}"
     )
 
     _log("[信息] 正在获取邮箱认证 token…")

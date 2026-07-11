@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import register
@@ -20,6 +21,7 @@ def test_shipped_sequence_present_in_source():
     browser_src = (ROOT / "browser.py").read_text(encoding="utf-8")
     mail_src = (ROOT / "mail.py").read_text(encoding="utf-8")
     config_src = (ROOT / "config.toml").read_text(encoding="utf-8")
+    config_example_src = (ROOT / "config.example.toml").read_text(encoding="utf-8")
 
     assert "accounts.x.ai/sign-up" in browser_src or "signup_url" in browser_src
     assert "open_signup_and_submit_email" in browser_src
@@ -37,6 +39,8 @@ def test_shipped_sequence_present_in_source():
 
     assert "load_config" in entry
     assert "append_account_csv" in entry
+    assert "sso_to_cpa_file" in entry or "cpa_output" in entry
+    assert "resolve_cpa_output_dir" in entry
     assert "signup_on_page" in entry or "signup_on_page" in browser_src
     assert "browser_session" in entry or "browser_session" in browser_src
     assert "run_worker_batch" in entry
@@ -73,10 +77,20 @@ def test_shipped_sequence_present_in_source():
     assert "goto_retries" in config_src
     assert "after_sso_capture_ms" in config_src
     assert "grok_home_url" in config_src
+    # 示例配置固定默认 csv；本地 config.toml 可改为 cpa
+    assert 'type = "csv"' in config_example_src
+    assert "path =" in config_src
+    assert "path =" in config_example_src
+    assert re.search(r'type\s*=\s*"(csv|cpa)"', config_src)
 
     helpers = (ROOT / "helpers.py").read_text(encoding="utf-8")
     assert '"SSO"' in helpers or "'SSO'" in helpers
     assert "SSO" in helpers
+
+    cpa_src = (ROOT / "cpa_output.py").read_text(encoding="utf-8")
+    assert "grok-" in cpa_src
+    assert "sso_to_token" in cpa_src
+    assert "token_to_cliproxy_entry" in cpa_src
 
     # 密钥/域名应在配置文件中，而非写死为代码唯一来源
     assert 'domain = "fltv.asia"' in config_src

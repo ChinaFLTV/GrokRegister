@@ -164,3 +164,63 @@ csv_path = "accounts.csv"
     assert cfg.workers == 1
     assert cfg.poll_interval_sec == 2
     assert cfg.after_email_submit_ms == 500
+    assert cfg.output_type == "csv"
+    assert cfg.csv_path == "accounts.csv"
+    assert cfg.output_path == ""
+
+
+def test_load_output_type_cpa(tmp_path: Path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        """
+[email]
+domain = "example.test"
+local_part_length = 8
+[duckmail]
+address = "a@example.test"
+password = "p"
+base_url = "https://example.test/api/mail"
+token_endpoint = "/token"
+messages_endpoint = "/messages"
+from_address = "noreply@x.ai"
+subject_marker = "xAI confirmation code"
+[signup]
+url = "https://accounts.x.ai/sign-up"
+[output]
+type = "cpa"
+path = "/tmp/cpa-out"
+csv_path = "ignored.csv"
+""",
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.output_type == "cpa"
+    assert cfg.output_path == "/tmp/cpa-out"
+    assert cfg.csv_path == "ignored.csv"
+
+
+def test_load_output_type_invalid(tmp_path: Path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        """
+[email]
+domain = "example.test"
+local_part_length = 8
+[duckmail]
+address = "a@example.test"
+password = "p"
+base_url = "https://example.test/api/mail"
+token_endpoint = "/token"
+messages_endpoint = "/messages"
+from_address = "noreply@x.ai"
+subject_marker = "xAI confirmation code"
+[signup]
+url = "https://accounts.x.ai/sign-up"
+[output]
+type = "json"
+csv_path = "accounts.csv"
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"\[output\]\.type"):
+        load_config(p)

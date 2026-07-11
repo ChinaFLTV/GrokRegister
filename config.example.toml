@@ -104,6 +104,15 @@ workers = 1
 # [output] 结果输出
 # -----------------------------------------------------------------------------
 [output]
-# 账号保存的 CSV 路径（追加写入，不覆盖历史）
+# 输出产物类型：
+#   csv — 默认；追加写入账号 CSV
+#   cpa — 拿到 SSO 后走 Device Flow 换 OAuth 凭证，写出 cliproxyapi 扁平 JSON
+type = "csv"
+
+# csv 模式：账号 CSV 路径（追加写入，不覆盖历史）
 # 列：邮箱账号、密码、SSO、姓、名
 csv_path = "accounts.csv"
+
+# cpa 模式：输出目录。每个账号一个文件：grok-{邮箱}.json
+# 留空时自动使用当前工作目录下 {yyyyMMdd-HHmm}-{序号}/（序号从 1 递增，跳过已存在目录）
+path = ""

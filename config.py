@@ -55,7 +55,15 @@ class Config:
     # 批量 / 并发
     total: int
     workers: int
+    # 输出产物：csv（默认）| cpa
+    output_type: str
+    # csv 模式：CSV 文件路径
     csv_path: str
+    # cpa 模式：输出目录；空则运行时自动分配 yyyyMMdd-HHmm-{序号}
+    output_path: str
+
+
+OUTPUT_TYPES = frozenset({"csv", "cpa"})
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
@@ -72,6 +80,17 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     output = raw["output"]
     run = raw.get("run") or {}
     timing = raw.get("timing") or {}
+
+    output_type = str(output.get("type", "csv")).strip().lower() or "csv"
+    if output_type not in OUTPUT_TYPES:
+        raise ValueError(
+            f"[output].type 无效：{output_type!r}，允许值：{', '.join(sorted(OUTPUT_TYPES))}"
+        )
+
+    # csv 兼容：历史配置只有 csv_path；缺省 accounts.csv
+    csv_path = str(output.get("csv_path", "accounts.csv") or "accounts.csv")
+    # cpa 输出目录；可空（运行时再解析默认目录）
+    output_path = str(output.get("path", "") or "").strip()
 
     return Config(
         email_domain=str(email["domain"]),
@@ -114,7 +133,9 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         goto_retries=int(timing.get("goto_retries", 3)),
         total=int(run.get("total", DEFAULT_TOTAL)),
         workers=int(run.get("workers", DEFAULT_WORKERS)),
-        csv_path=str(output["csv_path"]),
+        output_type=output_type,
+        csv_path=csv_path,
+        output_path=output_path,
     )
 
 

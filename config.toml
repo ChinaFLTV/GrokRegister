@@ -53,6 +53,8 @@ after_otp_filled_ms = 150
 after_otp_submit_ms = 400
 # 点击「完成注册」后的收尾等待（毫秒），便于页面提交完成（含 CF 校验时可略长）
 after_complete_ms = 500
+# 轮询 SSO Cookie 的间隔（毫秒）；注册后自动跳转 grok.com 期间会反复检查
+after_sso_capture_ms = 500
 # 调用登出接口后的短等待（毫秒），便于会话清理生效
 after_sign_out_ms = 300
 # 登出导航超时（毫秒）。勿设过大，避免 grok.com 卡住白等 45s
@@ -70,6 +72,8 @@ goto_retries = 3
 [signup]
 # xAI 注册页 URL
 url = "https://accounts.x.ai/sign-up"
+# 注册成功后站点通常会自动跳到 grok.com；此 URL 仅作标识/兼容，采集 SSO 时不再主动 goto
+grok_home_url = "https://grok.com"
 # 每轮注册成功后的登出地址（页面 GET 导航）。用于清除本轮登录态
 sign_out_url = "https://grok.com/sign-out"
 # 是否在每轮成功后执行登出。false=不登出（复用浏览器时可能已登录）
@@ -99,6 +103,15 @@ workers = 1
 # [output] 结果输出
 # -----------------------------------------------------------------------------
 [output]
-# 账号保存的 CSV 路径（追加写入，不覆盖历史）
-# 列：邮箱账号、密码、姓、名
-csv_path = "accounts.csv"
+# 输出产物类型：
+#   csv — 默认；追加写入账号 CSV
+#   cpa — 拿到 SSO 后走 Device Flow 换 OAuth 凭证，写出 cliproxyapi 扁平 JSON
+type = "cpa"
+
+# csv 模式：账号 CSV 路径（追加写入，不覆盖历史）
+# 列：邮箱账号、密码、SSO、姓、名
+# csv_path = "accounts.csv"
+
+# cpa 模式：输出目录。每个账号一个文件：grok-{邮箱}.json
+# 留空时自动使用当前工作目录下 {yyyyMMdd-HHmm}-{序号}/（序号从 1 递增，跳过已存在目录）
+path = ""

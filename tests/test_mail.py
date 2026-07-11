@@ -31,6 +31,7 @@ def _cfg(**overrides: Any) -> Config:
         poll_interval_sec=5,
         poll_timeout_sec=120,
         signup_url="https://accounts.x.ai/sign-up",
+        grok_home_url="https://grok.com",
         sign_out_url="https://grok.com/sign-out",
         sign_out_enabled=True,
         clear_auth_cookies=True,
@@ -42,6 +43,7 @@ def _cfg(**overrides: Any) -> Config:
         after_otp_filled_ms=150,
         after_otp_submit_ms=400,
         after_complete_ms=500,
+        after_sso_capture_ms=500,
         after_sign_out_ms=300,
         between_rounds_ms=800,
         otp_key_delay_ms=30,
@@ -51,7 +53,9 @@ def _cfg(**overrides: Any) -> Config:
         goto_retries=3,
         total=5,
         workers=1,
+        output_type="csv",
         csv_path="accounts.csv",
+        output_path="",
     )
     return replace(base, **overrides) if overrides else base
 
