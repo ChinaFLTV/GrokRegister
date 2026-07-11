@@ -2,4 +2,3 @@ playwright>=1.40.0
 requests>=2.31.0
 # PyPI 分发名为 curl-cffi，import 名为 curl_cffi
 curl-cffi>=0.6.0
-pytest>=8.0.0

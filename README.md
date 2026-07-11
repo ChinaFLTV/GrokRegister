@@ -14,9 +14,10 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 2. 配置
-cp config.example.toml config.toml
-# 编辑 domain / duckmail / [output] 等
+# 2. 配置：编辑项目根目录 config.toml
+#    至少填写 [email].domain（CF Email Routing 域名）、
+#    [duckmail].address / password（转发目标 duckmail 账号密码）
+#    其余项见文件内注释（含 [output] 产物类型等）
 
 # 3. （推荐）预热 Profile，人手过一次 Cloudflare
 python register.py --warm-profile
@@ -48,7 +49,7 @@ path = ""
 | `cpa`（默认） | `{path}/grok-{email}.json` | 扁平 `type=xai` OAuth，可给 cliproxyapi 用 |
 | `csv` | `accounts.csv` | 列：邮箱、密码、SSO、姓、名 |
 
-**cpa** 需要 `curl_cffi`（已在 `requirements.txt`）。启动时会预检依赖。
+**cpa** 需要 `curl-cffi`（已在 `requirements.txt`）。启动时会预检依赖。
 
 ---
 
@@ -62,4 +63,4 @@ path = ""
 | 收信邮箱 | `[duckmail].address` | 上述 CF 域名邮件转发到的 **duckmail 目标邮箱**（登录 duckmail 用） |
 | 收信密码 | `[duckmail].password` | 该 duckmail 邮箱的密码 |
 
-其余参数（并发、输出、浏览器、超时等）见配置文件内注释：`config.example.toml` / `config.toml`。
+其余参数（并发、输出、浏览器、超时等）见 `config.toml` 内注释。

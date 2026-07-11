@@ -14,9 +14,10 @@ python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 2. Config
-cp config.example.toml config.toml
-# Edit domain / duckmail / [output], etc.
+# 2. Config: edit config.toml in the project root
+#    At minimum set [email].domain (Cloudflare Email Routing domain),
+#    [duckmail].address / password (forward target duckmail credentials)
+#    See in-file comments for the rest (including [output] product type)
 
 # 3. (Recommended) Warm the browser profile and pass Cloudflare once by hand
 python register.py --warm-profile
@@ -48,7 +49,7 @@ path = ""
 | `cpa` (default) | `{path}/grok-{email}.json` | Flat `type=xai` OAuth for cliproxyapi |
 | `csv` | `accounts.csv` | Columns: email, password, SSO, last name, first name |
 
-**cpa** requires `curl_cffi` (listed in `requirements.txt`). Dependencies are checked at startup.
+**cpa** requires `curl-cffi` (listed in `requirements.txt`). Dependencies are checked at startup.
 
 ---
 
@@ -62,4 +63,4 @@ Before running, set at least these three in `config.toml`:
 | Inbox email | `[duckmail].address` | The **duckmail mailbox** that receives mail forwarded from that CF domain |
 | Inbox password | `[duckmail].password` | Password for that duckmail mailbox |
 
-For everything else (concurrency, output, browser, timeouts, etc.), see comments in `config.example.toml` / `config.toml`.
+For everything else (concurrency, output, browser, timeouts, etc.), see comments in `config.toml`.
