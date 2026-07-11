@@ -8,8 +8,9 @@
 # [email] 注册用邮箱生成规则
 # -----------------------------------------------------------------------------
 [email]
-# 邮箱域名（@ 后面的部分）。最终地址形如：随机本地部分@该域名
-domain = "【填写你的cloudflare中注册的邮箱域名】"
+# Cloudflare Email Routing 上绑定/验证过的收信域名（@ 后面的部分）
+# 最终注册地址形如：随机本地部分@该域名，邮件经 CF 转发到下方 duckmail
+domain = "【填写你的 Cloudflare Email Routing 邮箱域名】"
 # 邮箱本地部分（@ 前面）随机字符长度；字符集为大小写字母 + 数字
 local_part_length = 8
 
@@ -105,8 +106,8 @@ workers = 1
 # -----------------------------------------------------------------------------
 [output]
 # 输出产物类型：
-#   csv — 默认；追加写入账号 CSV
-#   cpa — 拿到 SSO 后走 Device Flow 换 OAuth 凭证，写出 cliproxyapi 扁平 JSON
+#   cpa — 默认；拿到 SSO 后走 Device Flow 换 OAuth 凭证，写出 cliproxyapi 扁平 JSON
+#   csv — 追加写入账号 CSV
 type = "cpa"
 
 # csv 模式：账号 CSV 路径（追加写入，不覆盖历史）

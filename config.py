@@ -81,7 +81,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     run = raw.get("run") or {}
     timing = raw.get("timing") or {}
 
-    output_type = str(output.get("type", "csv")).strip().lower() or "csv"
+    output_type = str(output.get("type", "cpa")).strip().lower() or "cpa"
     if output_type not in OUTPUT_TYPES:
         raise ValueError(
             f"[output].type 无效：{output_type!r}，允许值：{', '.join(sorted(OUTPUT_TYPES))}"

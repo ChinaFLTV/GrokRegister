@@ -164,7 +164,7 @@ csv_path = "accounts.csv"
     assert cfg.workers == 1
     assert cfg.poll_interval_sec == 2
     assert cfg.after_email_submit_ms == 500
-    assert cfg.output_type == "csv"
+    assert cfg.output_type == "cpa"
     assert cfg.csv_path == "accounts.csv"
     assert cfg.output_path == ""
 
