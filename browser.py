@@ -3,12 +3,39 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, Literal
 from urllib.parse import urlparse
 
-from playwright.sync_api import BrowserContext, Page, Playwright, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Error as PlaywrightError,
+    Page,
+    Playwright,
+    TimeoutError as PlaywrightTimeout,
+    sync_playwright,
+)
 
 from config import Config
 from helpers import normalize_otp_chars
+
+# get_by_role 常用 role（避免 str 与 Playwright Literal 不兼容）
+AriaRole = Literal["button", "link", "textbox", "checkbox", "radio", "heading"]
+
+# UI 自动化常见失败类型（替代 bare except Exception，消除 IDE “Too broad exception”）
+_UI_ERRORS = (
+    PlaywrightError,
+    PlaywrightTimeout,
+    TimeoutError,
+    OSError,
+    RuntimeError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    KeyError,
+    IndexError,
+    StopIteration,
+)
 
 # 页面定位器（站点文案可能是英文或中文，按钮匹配串需保留双语）
 EMAIL_INPUT = 'input[type="email"], input[name="email"], input[autocomplete="email"]'
@@ -82,10 +109,11 @@ def open_browser_context(playwright: Playwright, cfg: Config) -> BrowserContext:
 
 
 def close_browser_context(context: BrowserContext) -> None:
-    browser = getattr(context, "_owned_browser", None)
+    owned = getattr(context, "_owned_browser", None)
     context.close()
-    if browser is not None:
-        browser.close()
+    # getattr 类型为 Any | None；用 isinstance 收窄到 Browser 再 close
+    if isinstance(owned, Browser):
+        owned.close()
 
 
 def first_page(context: BrowserContext) -> Page:
@@ -107,12 +135,12 @@ def _react_fill(loc, value: str) -> None:
     loc.click(force=True)
     try:
         loc.fill("")
-    except Exception:
+    except _UI_ERRORS:
         pass
     loc.fill(value)
     try:
         got = (loc.input_value(timeout=1000) or "").strip()
-    except Exception:
+    except _UI_ERRORS:
         got = ""
     if got == value:
         return
@@ -136,7 +164,7 @@ def _react_fill(loc, value: str) -> None:
         )
         if ok:
             return
-    except Exception:
+    except _UI_ERRORS:
         pass
     # 最后退回逐字输入
     try:
@@ -144,27 +172,27 @@ def _react_fill(loc, value: str) -> None:
         loc.press("ControlOrMeta+a")
         loc.press("Backspace")
         loc.press_sequentially(value, delay=20)
-    except Exception:
+    except _UI_ERRORS:
         pass
 
 
 def _click_by_texts(
-    page: Page,
-    texts: list[str],
-    role: str = "button",
-    timeout: float = 5000,
+        page: Page,
+        texts: list[str],
+        role: AriaRole = "button",
+        timeout: float = 5000,
 ) -> None:
     for text in texts:
         try:
             page.get_by_role(role, name=text, exact=False).first.click(timeout=timeout)
             return
-        except Exception:
+        except _UI_ERRORS:
             continue
     for text in texts:
         try:
             page.get_by_text(text, exact=False).first.click(timeout=timeout)
             return
-        except Exception:
+        except _UI_ERRORS:
             continue
     raise RuntimeError(f"未找到匹配控件，候选文案：{texts}")
 
@@ -173,7 +201,7 @@ def _page_form_error_snippet(page: Page, limit: int = 240) -> str:
     """抓取页面上可能的校验错误文案，便于诊断完成注册失败。"""
     try:
         body = page.locator("body").inner_text(timeout=2000) or ""
-    except Exception:
+    except _UI_ERRORS:
         return ""
     markers = (
         "required",
@@ -209,13 +237,13 @@ def is_cloudflare_blocked(page: Page) -> bool:
     body = ""
     try:
         body = (page.locator("body").inner_text(timeout=3000) or "").lower()
-    except Exception:
+    except _UI_ERRORS:
         pass
     return (
-        "attention required" in title
-        or "cloudflare" in title
-        or "you have been blocked" in body
-        or "sorry, you have been blocked" in body
+            "attention required" in title
+            or "cloudflare" in title
+            or "you have been blocked" in body
+            or "sorry, you have been blocked" in body
     )
 
 
@@ -239,10 +267,10 @@ def _is_retriable_navigation_error(exc: BaseException) -> bool:
     )
     # 仅对中断类错误重试；纯超时不盲目重试
     return any(m in text for m in markers) and (
-        "ERR_ABORTED" in text
-        or "NS_BINDING_ABORTED" in text
-        or "detached" in text.lower()
-        or "interrupted" in text.lower()
+            "ERR_ABORTED" in text
+            or "NS_BINDING_ABORTED" in text
+            or "detached" in text.lower()
+            or "interrupted" in text.lower()
     )
 
 
@@ -257,11 +285,11 @@ def safe_goto(page: Page, url: str, cfg: Config) -> None:
         try:
             try:
                 page.evaluate("() => { try { window.stop(); } catch (e) {} }")
-            except Exception:
+            except _UI_ERRORS:
                 pass
             page.goto(url, wait_until="domcontentloaded", timeout=cfg.timeout_ms)
             return
-        except Exception as exc:
+        except _UI_ERRORS as exc:
             last_err = exc
             if attempt >= retries or not _is_retriable_navigation_error(exc):
                 raise
@@ -300,14 +328,14 @@ _AUTH_COOKIE_NAMES = frozenset(
 def _url_host(url: str) -> str:
     try:
         return (urlparse(url).hostname or "").lower()
-    except Exception:
+    except _UI_ERRORS:
         return ""
 
 
 def _url_path(url: str) -> str:
     try:
         return (urlparse(url).path or "").rstrip("/") or "/"
-    except Exception:
+    except _UI_ERRORS:
         return ""
 
 
@@ -342,12 +370,12 @@ def _is_signup_or_incomplete_url(url: str) -> bool:
     return any(m in path for m in markers) or path in {"/", ""}
 
 
-def _collect_context_cookies(page: Page) -> list[dict]:
+def _collect_context_cookies(page: Page) -> list[dict[str, Any]]:
     """汇总上下文 Cookie（含按常见域名再取一次，避免遗漏）。"""
     context = page.context
     seen: set[tuple[str, str, str]] = set()
-    out: list[dict] = []
-    urls = [
+    out: list[dict[str, Any]] = []
+    urls: list[str | None] = [
         None,
         "https://grok.com",
         "https://www.grok.com",
@@ -358,18 +386,20 @@ def _collect_context_cookies(page: Page) -> list[dict]:
     for u in urls:
         try:
             batch = context.cookies(u) if u else context.cookies()
-        except Exception:
+        except _UI_ERRORS:
             continue
         for c in batch:
+            # Playwright Cookie 是 TypedDict/协议对象，统一成普通 dict 再存
+            item = dict(c)
             key = (
-                str(c.get("name") or ""),
-                str(c.get("domain") or ""),
-                str(c.get("path") or ""),
+                str(item.get("name") or ""),
+                str(item.get("domain") or ""),
+                str(item.get("path") or ""),
             )
             if key in seen:
                 continue
             seen.add(key)
-            out.append(c)
+            out.append(item)
     return out
 
 
@@ -548,7 +578,7 @@ def _clear_auth_cookies(page: Page) -> int:
     try:
         # 用汇总列表，覆盖多域名
         cookies = _collect_context_cookies(page)
-    except Exception:
+    except _UI_ERRORS:
         return 0
 
     keep: list[dict] = []
@@ -575,7 +605,7 @@ def _clear_auth_cookies(page: Page) -> int:
                 valid.append(c)
             if valid:
                 context.add_cookies(valid)
-    except Exception:
+    except _UI_ERRORS:
         return 0
     return removed
 
@@ -600,19 +630,19 @@ def sign_out_session(page: Page, cfg: Config) -> None:
         # 先停掉账户页上可能未结束的导航，再 GET 登出
         try:
             page.evaluate("() => { try { window.stop(); } catch (e) {} }")
-        except Exception:
+        except _UI_ERRORS:
             pass
         page.goto(url, wait_until="domcontentloaded", timeout=timeout)
         navigated = True
         print(f"[信息] 登出导航完成：{page.url}", flush=True)
-    except Exception as exc:
+    except _UI_ERRORS as exc:
         print(f"[警告] 页面导航登出未完全成功：{exc}", flush=True)
         # 短超时再试一次 safe_goto（内部会重试 ERR_ABORTED）
         try:
             page.goto(url, wait_until="commit", timeout=timeout)
             navigated = True
             print(f"[信息] 登出导航（commit）完成：{page.url}", flush=True)
-        except Exception as exc2:
+        except _UI_ERRORS as exc2:
             print(f"[警告] 登出导航再次失败：{exc2}", flush=True)
 
     cur = page.url or ""
@@ -633,7 +663,7 @@ def sign_out_session(page: Page, cfg: Config) -> None:
             page.evaluate(
                 "() => { try { localStorage.clear(); sessionStorage.clear(); } catch (e) {} }"
             )
-        except Exception:
+        except _UI_ERRORS:
             pass
         leftover = extract_sso_cookie(page)
         if leftover:
@@ -658,7 +688,7 @@ def sign_out_session(page: Page, cfg: Config) -> None:
                 "[警告] 登出清理后 Cookie 中仍有 sso，下一轮开始前会再次尝试清理",
                 flush=True,
             )
-    except Exception:
+    except _UI_ERRORS:
         pass
 
 
@@ -677,7 +707,7 @@ def ensure_logged_out_for_signup(page: Page, cfg: Config) -> None:
     if cfg.sign_out_enabled and (cfg.sign_out_url or "").strip():
         try:
             sign_out_session(page, cfg)
-        except Exception as exc:
+        except _UI_ERRORS as exc:
             print(f"[警告] 预清理登出失败：{exc}", flush=True)
     elif cfg.clear_auth_cookies:
         n = _clear_auth_cookies(page)
@@ -702,7 +732,7 @@ def open_signup_and_submit_email(page: Page, cfg: Config, email: str) -> None:
         page.wait_for_load_state(
             "domcontentloaded", timeout=min(8000, cfg.timeout_ms)
         )
-    except Exception:
+    except _UI_ERRORS:
         pass
     page.wait_for_timeout(max(0, min(cfg.between_rounds_ms, 1200)))
     _click_by_texts(
@@ -736,7 +766,7 @@ def _set_input_otp_value(page: Page, chars: str, cfg: Config) -> bool:
     delay = max(0, int(cfg.otp_key_delay_ms))
     try:
         loc.wait_for(state="attached", timeout=min(cfg.fill_timeout_ms, 8000))
-    except Exception:
+    except _UI_ERRORS:
         return False
 
     try:
@@ -747,7 +777,7 @@ def _set_input_otp_value(page: Page, chars: str, cfg: Config) -> bool:
         got = (loc.input_value(timeout=2000) or "").strip()
         if got.upper() == chars.upper() and len(got) == len(chars):
             return True
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     try:
@@ -776,7 +806,7 @@ def _set_input_otp_value(page: Page, chars: str, cfg: Config) -> bool:
         got = (loc.input_value(timeout=1000) or "").strip()
         if got.upper() == chars.upper():
             return True
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     try:
@@ -786,7 +816,7 @@ def _set_input_otp_value(page: Page, chars: str, cfg: Config) -> bool:
         page.keyboard.type(chars, delay=delay)
         got = (loc.input_value(timeout=2000) or "").strip()
         return got.upper() == chars.upper() and len(got) == len(chars)
-    except Exception:
+    except _UI_ERRORS:
         return False
 
 
@@ -797,7 +827,7 @@ def _fill_otp_fallback(page: Page, chars: str, cfg: Config) -> bool:
         loc.click()
         loc.fill(chars)
         return True
-    except Exception:
+    except _UI_ERRORS:
         return False
 
 
@@ -808,7 +838,7 @@ def _page_still_on_verify(page: Page) -> bool:
                 loc = page.get_by_text(text, exact=False).first
                 if loc.is_visible():
                     return True
-        except Exception:
+        except _UI_ERRORS:
             continue
     return False
 
@@ -816,7 +846,7 @@ def _page_still_on_verify(page: Page) -> bool:
 def _assert_no_otp_validation_error(page: Page) -> None:
     try:
         body = page.locator("body").inner_text(timeout=2000) or ""
-    except Exception:
+    except _UI_ERRORS:
         return
     markers = (
         "Invalid input: expected string, received undefined",
@@ -834,7 +864,7 @@ def _assert_no_otp_validation_error(page: Page) -> None:
 def _otp_input_value(page: Page) -> str:
     try:
         return (_otp_input(page).input_value(timeout=1000) or "").strip()
-    except Exception:
+    except _UI_ERRORS:
         return ""
 
 
@@ -859,7 +889,7 @@ def fill_verification_code(page: Page, code: str, cfg: Config) -> None:
     page.wait_for_timeout(cfg.after_otp_filled_ms)
     try:
         page.locator('form button[type="submit"]').first.click(timeout=cfg.click_timeout_ms)
-    except Exception:
+    except _UI_ERRORS:
         _click_by_texts(page, CONFIRM_EMAIL_TEXTS, timeout=cfg.click_timeout_ms)
 
     page.wait_for_timeout(cfg.after_otp_submit_ms)
@@ -870,7 +900,7 @@ def fill_verification_code(page: Page, code: str, cfg: Config) -> None:
         page.locator(PASSWORD_INPUT).first.wait_for(
             state="visible", timeout=cfg.timeout_ms
         )
-    except Exception as exc:
+    except _UI_ERRORS as exc:
         if _page_still_on_verify(page):
             _assert_no_otp_validation_error(page)
             raise RuntimeError(deadline_msg) from exc
@@ -880,7 +910,7 @@ def fill_verification_code(page: Page, code: str, cfg: Config) -> None:
                     state="hidden", timeout=cfg.timeout_ms
                 )
                 break
-        except Exception as exc2:
+        except _UI_ERRORS as exc2:
             raise RuntimeError(deadline_msg) from exc2
 
 
@@ -888,7 +918,7 @@ def _password_form_visible(page: Page) -> bool:
     try:
         loc = page.locator(PASSWORD_INPUT).first
         return loc.is_visible()
-    except Exception:
+    except _UI_ERRORS:
         return False
 
 
@@ -921,33 +951,33 @@ def _tick_optional_checkboxes(page: Page) -> None:
             try:
                 if box.is_visible() and not box.is_checked():
                     box.check(force=True)
-            except Exception:
+            except _UI_ERRORS:
                 try:
                     box.click(force=True)
-                except Exception:
+                except _UI_ERRORS:
                     pass
-    except Exception:
+    except _UI_ERRORS:
         pass
 
 
 def _fill_complete_form_fields(
-    page: Page,
-    cfg: Config,
-    first_name: str,
-    last_name: str,
-    password: str,
+        page: Page,
+        cfg: Config,
+        first_name: str,
+        last_name: str,
+        password: str,
 ) -> None:
     """填写姓名/密码，并校验写入结果。"""
     # 姓名：优先语义选择器，再回退可见文本输入
     try:
         _fill_first(page, FIRST_NAME_INPUT, first_name, timeout=cfg.fill_timeout_ms)
-    except Exception:
+    except _UI_ERRORS:
         pass
     try:
         _fill_first(
             page, LAST_NAME_INPUT, last_name, timeout=min(cfg.fill_timeout_ms, 8000)
         )
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     name_inputs = page.locator(
@@ -965,26 +995,26 @@ def _fill_complete_form_fields(
                     continue
                 cur = (loc.input_value(timeout=500) or "").strip()
                 filled.append(cur)
-            except Exception:
+            except _UI_ERRORS:
                 filled.append("")
         # 第 1 个空文本框 -> first，第 2 个 -> last
         empties = [i for i, v in enumerate(filled) if not v]
         if empties:
             try:
                 _react_fill(name_inputs.nth(empties[0]), first_name)
-            except Exception:
+            except _UI_ERRORS:
                 pass
         if len(empties) >= 2:
             try:
                 _react_fill(name_inputs.nth(empties[1]), last_name)
-            except Exception:
+            except _UI_ERRORS:
                 pass
         elif len(filled) >= 2 and not filled[1]:
             try:
                 _react_fill(name_inputs.nth(1), last_name)
-            except Exception:
+            except _UI_ERRORS:
                 pass
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     # 密码（含确认密码）
@@ -996,7 +1026,7 @@ def _fill_complete_form_fields(
             loc = pw_fields.nth(i)
             if loc.is_visible():
                 _react_fill(loc, password)
-        except Exception:
+        except _UI_ERRORS:
             pass
 
     _tick_optional_checkboxes(page)
@@ -1004,7 +1034,7 @@ def _fill_complete_form_fields(
     # 校验
     try:
         pw_val = (pw_fields.first.input_value(timeout=1000) or "").strip()
-    except Exception:
+    except _UI_ERRORS:
         pw_val = ""
     if not pw_val:
         raise RuntimeError("密码框写入失败（值为空）")
@@ -1019,7 +1049,7 @@ def _fill_complete_form_fields(
             if (loc.input_value(timeout=500) or "").strip():
                 name_ok = True
                 break
-    except Exception:
+    except _UI_ERRORS:
         pass
     if not name_ok:
         # 最后再强写两个常见框
@@ -1027,7 +1057,7 @@ def _fill_complete_form_fields(
             _react_fill(name_inputs.nth(0), first_name)
             _react_fill(name_inputs.nth(1), last_name)
             name_ok = True
-        except Exception:
+        except _UI_ERRORS:
             pass
     if not name_ok:
         print("[警告] 未能确认姓名字段已写入，仍尝试提交", flush=True)
@@ -1049,7 +1079,7 @@ def _submit_complete_registration(page: Page, cfg: Config) -> None:
         if btn.is_visible():
             btn.click(timeout=cfg.click_timeout_ms)
             return
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     # 2) 明确文案（不含笼统的 Sign up / Continue）
@@ -1064,7 +1094,7 @@ def _submit_complete_registration(page: Page, cfg: Config) -> None:
     try:
         _click_by_texts(page, primary, timeout=cfg.click_timeout_ms)
         return
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     # 3) 次级文案
@@ -1072,24 +1102,24 @@ def _submit_complete_registration(page: Page, cfg: Config) -> None:
     try:
         _click_by_texts(page, secondary, timeout=cfg.click_timeout_ms)
         return
-    except Exception:
+    except _UI_ERRORS:
         pass
 
     # 4) Enter
     try:
         page.locator(PASSWORD_INPUT).first.press("Enter")
         return
-    except Exception:
+    except _UI_ERRORS:
         pass
     raise RuntimeError("无法点击完成注册提交按钮")
 
 
 def complete_registration(
-    page: Page,
-    cfg: Config,
-    first_name: str,
-    last_name: str,
-    password: str,
+        page: Page,
+        cfg: Config,
+        first_name: str,
+        last_name: str,
+        password: str,
 ) -> None:
     if _page_still_on_verify(page):
         raise RuntimeError(
@@ -1098,7 +1128,7 @@ def complete_registration(
 
     try:
         _wait_complete_form_ready(page, cfg)
-    except Exception as exc:
+    except _UI_ERRORS as exc:
         raise RuntimeError(
             f"未出现密码输入框，无法完成注册。当前 url={page.url!r}"
         ) from exc
@@ -1121,7 +1151,7 @@ def complete_registration(
             print(f"[信息] 完成注册已生效 url={page.url!r}", flush=True)
             return
         if not _password_form_visible(page) and not _is_signup_or_incomplete_url(
-            page.url or ""
+                page.url or ""
         ):
             print(f"[信息] 完成注册表单已离开 url={page.url!r}", flush=True)
             return
@@ -1133,7 +1163,7 @@ def complete_registration(
             print("[信息] 仍在完成注册表单，重新填写并再次提交…", flush=True)
             try:
                 _fill_and_submit(label="重试完成注册")
-            except Exception as exc:
+            except _UI_ERRORS as exc:
                 print(f"[警告] 重试提交失败：{exc}", flush=True)
             retried = True
 
@@ -1190,15 +1220,15 @@ def warm_profile(cfg: Config) -> None:
 
 
 def signup_on_page(
-    page: Page,
-    cfg: Config,
-    email: str,
-    code_provider,
-    first_name: str,
-    last_name: str,
-    password: str,
-    *,
-    sign_out: bool = True,
+        page: Page,
+        cfg: Config,
+        email: str,
+        code_provider,
+        first_name: str,
+        last_name: str,
+        password: str,
+        *,
+        sign_out: bool = True,
 ) -> str:
     """
     在已打开的页面上完成一整轮注册并采集 SSO。
@@ -1227,12 +1257,12 @@ def signup_on_page(
 
 
 def run_browser_signup(
-    cfg: Config,
-    email: str,
-    code_provider,
-    first_name: str,
-    last_name: str,
-    password: str,
+        cfg: Config,
+        email: str,
+        code_provider,
+        first_name: str,
+        last_name: str,
+        password: str,
 ) -> str:
     """单轮便捷入口：启动浏览器 → 注册取 SSO → 登出 → 关闭。返回 SSO Cookie。"""
     with browser_session(cfg) as page:
@@ -1260,12 +1290,14 @@ class browser_session:
                 flush=True,
             )
         self._pw = sync_playwright().start()
-        self._context = open_browser_context(self._pw, self.cfg)
-        self._page = first_page(self._context)
-        self._page.set_default_timeout(self.cfg.timeout_ms)
-        return self._page
+        context = open_browser_context(self._pw, self.cfg)
+        page = first_page(context)
+        page.set_default_timeout(self.cfg.timeout_ms)
+        self._context = context
+        self._page = page
+        return page
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._context is not None:
             close_browser_context(self._context)
             self._context = None

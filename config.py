@@ -61,9 +61,31 @@ class Config:
     csv_path: str
     # cpa 模式：输出目录；空则运行时自动分配 yyyyMMdd-HHmm-{序号}
     output_path: str
+    # cpa Device Flow 超时 / 重试
+    cpa_http_timeout_sec: float
+    cpa_poll_timeout_sec: float
+    cpa_max_retries: int
+    cpa_retry_base_sec: float
 
 
 OUTPUT_TYPES = frozenset({"csv", "cpa"})
+
+
+def _cfg_float(*candidates: object, default: float) -> float:
+    """从若干候选值中取第一个非 None，再转 float（避免 dict.get 的 Optional 告警）。"""
+    for value in candidates:
+        if value is None:
+            continue
+        return float(value)  # type: ignore[arg-type]
+    return default
+
+
+def _cfg_int(*candidates: object, default: int) -> int:
+    for value in candidates:
+        if value is None:
+            continue
+        return int(value)  # type: ignore[arg-type]
+    return default
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
@@ -94,7 +116,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
 
     return Config(
         email_domain=str(email["domain"]),
-        local_part_length=int(email.get("local_part_length", 8)),
+        local_part_length=_cfg_int(email.get("local_part_length"), default=8),
         duckmail_address=str(duck["address"]),
         duckmail_password=str(duck["password"]),
         duckmail_base_url=str(duck["base_url"]).rstrip("?&"),
@@ -102,40 +124,66 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         messages_endpoint=str(duck["messages_endpoint"]),
         from_address=str(duck["from_address"]),
         subject_marker=str(duck["subject_marker"]),
-        poll_interval_sec=float(
-            timing.get("poll_interval_sec", duck.get("poll_interval_sec", 2))
+        poll_interval_sec=_cfg_float(
+            timing.get("poll_interval_sec"),
+            duck.get("poll_interval_sec"),
+            default=2.0,
         ),
-        poll_timeout_sec=float(
-            timing.get("poll_timeout_sec", duck.get("poll_timeout_sec", 120))
+        poll_timeout_sec=_cfg_float(
+            timing.get("poll_timeout_sec"),
+            duck.get("poll_timeout_sec"),
+            default=120.0,
         ),
         signup_url=str(signup["url"]),
-        grok_home_url=str(signup.get("grok_home_url", "https://grok.com")),
-        sign_out_url=str(
-            signup.get("sign_out_url", "https://grok.com/sign-out")
-        ),
+        grok_home_url=str(signup.get("grok_home_url") or "https://grok.com"),
+        sign_out_url=str(signup.get("sign_out_url") or "https://grok.com/sign-out"),
         sign_out_enabled=bool(signup.get("sign_out_enabled", True)),
         clear_auth_cookies=bool(signup.get("clear_auth_cookies", True)),
         headless=bool(signup.get("headless", False)),
-        timeout_ms=int(timing.get("timeout_ms", signup.get("timeout_ms", 45000))),
-        browser_channel=str(signup.get("browser_channel", "chrome")),
-        user_data_dir=str(signup.get("user_data_dir", DEFAULT_USER_DATA_DIR)),
-        after_email_submit_ms=int(timing.get("after_email_submit_ms", 500)),
-        after_otp_filled_ms=int(timing.get("after_otp_filled_ms", 150)),
-        after_otp_submit_ms=int(timing.get("after_otp_submit_ms", 400)),
-        after_complete_ms=int(timing.get("after_complete_ms", 500)),
-        after_sso_capture_ms=int(timing.get("after_sso_capture_ms", 800)),
-        after_sign_out_ms=int(timing.get("after_sign_out_ms", 300)),
-        between_rounds_ms=int(timing.get("between_rounds_ms", 800)),
-        otp_key_delay_ms=int(timing.get("otp_key_delay_ms", 30)),
-        click_timeout_ms=int(timing.get("click_timeout_ms", 5000)),
-        fill_timeout_ms=int(timing.get("fill_timeout_ms", 12000)),
-        sign_out_timeout_ms=int(timing.get("sign_out_timeout_ms", 15000)),
-        goto_retries=int(timing.get("goto_retries", 3)),
-        total=int(run.get("total", DEFAULT_TOTAL)),
-        workers=int(run.get("workers", DEFAULT_WORKERS)),
+        timeout_ms=_cfg_int(
+            timing.get("timeout_ms"),
+            signup.get("timeout_ms"),
+            default=45000,
+        ),
+        browser_channel=str(signup.get("browser_channel") or "chrome"),
+        user_data_dir=str(signup.get("user_data_dir") or DEFAULT_USER_DATA_DIR),
+        after_email_submit_ms=_cfg_int(timing.get("after_email_submit_ms"), default=500),
+        after_otp_filled_ms=_cfg_int(timing.get("after_otp_filled_ms"), default=150),
+        after_otp_submit_ms=_cfg_int(timing.get("after_otp_submit_ms"), default=400),
+        after_complete_ms=_cfg_int(timing.get("after_complete_ms"), default=500),
+        after_sso_capture_ms=_cfg_int(timing.get("after_sso_capture_ms"), default=800),
+        after_sign_out_ms=_cfg_int(timing.get("after_sign_out_ms"), default=300),
+        between_rounds_ms=_cfg_int(timing.get("between_rounds_ms"), default=800),
+        otp_key_delay_ms=_cfg_int(timing.get("otp_key_delay_ms"), default=30),
+        click_timeout_ms=_cfg_int(timing.get("click_timeout_ms"), default=5000),
+        fill_timeout_ms=_cfg_int(timing.get("fill_timeout_ms"), default=12000),
+        sign_out_timeout_ms=_cfg_int(timing.get("sign_out_timeout_ms"), default=15000),
+        goto_retries=_cfg_int(timing.get("goto_retries"), default=3),
+        total=_cfg_int(run.get("total"), default=DEFAULT_TOTAL),
+        workers=_cfg_int(run.get("workers"), default=DEFAULT_WORKERS),
         output_type=output_type,
         csv_path=csv_path,
         output_path=output_path,
+        cpa_http_timeout_sec=_cfg_float(
+            timing.get("cpa_http_timeout_sec"),
+            output.get("cpa_http_timeout_sec"),
+            default=15.0,
+        ),
+        cpa_poll_timeout_sec=_cfg_float(
+            timing.get("cpa_poll_timeout_sec"),
+            output.get("cpa_poll_timeout_sec"),
+            default=60.0,
+        ),
+        cpa_max_retries=_cfg_int(
+            timing.get("cpa_max_retries"),
+            output.get("cpa_max_retries"),
+            default=8,
+        ),
+        cpa_retry_base_sec=_cfg_float(
+            timing.get("cpa_retry_base_sec"),
+            output.get("cpa_retry_base_sec"),
+            default=15.0,
+        ),
     )
 
 

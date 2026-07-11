@@ -78,7 +78,7 @@ def _migrate_legacy_csv_if_needed(csv_path: Path) -> None:
         return
     if header != _LEGACY_CSV_COLUMNS:
         return
-    migrated = [list(CSV_COLUMNS)]
+    migrated: list[list[str]] = [list(CSV_COLUMNS)]
     for row in rows[1:]:
         # 旧: 邮箱, 密码, 姓, 名  →  新: 邮箱, 密码, SSO, 姓, 名
         email = row[0] if len(row) > 0 else ""
@@ -93,12 +93,12 @@ def _migrate_legacy_csv_if_needed(csv_path: Path) -> None:
 
 
 def append_account_csv(
-    path: str | Path,
-    email: str,
-    password: str,
-    sso: str,
-    last_name: str,
-    first_name: str,
+        path: str | Path,
+        email: str,
+        password: str,
+        sso: str,
+        last_name: str,
+        first_name: str,
 ) -> None:
     """线程安全追加一行账号（带锁，避免并发写坏 CSV）。列：邮箱,密码,SSO,姓,名。"""
     csv_path = Path(path)
@@ -108,6 +108,6 @@ def append_account_csv(
         with csv_path.open("a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if write_header:
-                writer.writerow(CSV_COLUMNS)
+                writer.writerow(list(CSV_COLUMNS))
             writer.writerow([email, password, sso, last_name, first_name])
             f.flush()

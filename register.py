@@ -10,8 +10,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
-from browser import browser_session, sign_out_session, signup_on_page, warm_profile
-from config import DEFAULT_CONFIG_PATH, load_config, with_worker_profile
+from browser import (
+    _UI_ERRORS,
+    browser_session,
+    sign_out_session,
+    signup_on_page,
+    warm_profile,
+)
+from config import DEFAULT_CONFIG_PATH, Config, load_config, with_worker_profile
 from cpa_output import ensure_cpa_dependencies, resolve_cpa_output_dir, sso_to_cpa_file
 from helpers import (
     append_account_csv,
@@ -30,14 +36,14 @@ def _log(msg: str) -> None:
 
 
 def _save_account_product(
-    cfg,
-    *,
-    email: str,
-    password: str,
-    sso: str,
-    last_name: str,
-    first_name: str,
-    tag: str,
+        cfg,
+        *,
+        email: str,
+        password: str,
+        sso: str,
+        last_name: str,
+        first_name: str,
+        tag: str,
 ) -> str:
     """
     按 [output].type 落盘产物。返回用于日志的「保存目标」描述。
@@ -54,7 +60,7 @@ def _save_account_product(
         if not (out_dir or "").strip():
             raise RuntimeError("cpa 模式缺少 output_path（运行时应已解析默认目录）")
         _log(f"{tag} [信息] SSO 已拿到，开始 Device Flow → CPA JSON…")
-        cpa_path = sso_to_cpa_file(sso, email, out_dir)
+        cpa_path = sso_to_cpa_file(cfg, sso, email, out_dir)
         _log(f"{tag} [完成] 已保存 CPA → {cpa_path} | {base_summary}")
         return str(cpa_path)
 
@@ -67,13 +73,13 @@ def _save_account_product(
 
 
 def _register_one_on_page(
-    page,
-    cfg,
-    token: str,
-    *,
-    index: int,
-    total: int,
-    worker_id: int,
+        page,
+        cfg,
+        token: str,
+        *,
+        index: int,
+        total: int,
+        worker_id: int,
 ) -> tuple[bool, str]:
     """在已打开的 page 上注册一个账号（不开关浏览器）。"""
     tag = f"[{index}/{total}#w{worker_id}]"
@@ -123,25 +129,25 @@ def _register_one_on_page(
         sign_out_session(page, cfg)
         page.wait_for_timeout(max(0, cfg.between_rounds_ms))
         return True, summary
-    except Exception as exc:
+    except _UI_ERRORS as exc:
         _log(f"{tag} [失败] {exc}")
         # 已拿到 SSO 但写盘/CPA 失败：仍登出，避免污染下一轮
         if sso_got:
             try:
                 _log(f"{tag} [信息] 写盘失败后尝试登出以清理会话…")
                 sign_out_session(page, cfg)
-            except Exception as logout_exc:
+            except _UI_ERRORS as logout_exc:
                 _log(f"{tag} [警告] 失败后登出异常：{logout_exc}")
         return False, str(exc)
 
 
 def run_worker_batch(
-    cfg,
-    token: str,
-    indices: list[int],
-    *,
-    total: int,
-    worker_id: int,
+        cfg,
+        token: str,
+        indices: list[int],
+        *,
+        total: int,
+        worker_id: int,
 ) -> tuple[int, int]:
     """
     单个 worker：打开一次浏览器，循环 indices 中的序号依次注册。
@@ -180,15 +186,23 @@ def _partition_indices(total_n: int, workers_n: int) -> list[list[int]]:
     return buckets
 
 
+def _resolve_run_count(cli_value: int | None, cfg_value: int) -> int:
+    """CLI 覆盖优先，否则用配置。"""
+    if cli_value is not None:
+        return cli_value
+    return cfg_value
+
+
 def run_batch(
     config_path: str | Path = DEFAULT_CONFIG_PATH,
     *,
     total: int | None = None,
     workers: int | None = None,
 ) -> int:
-    cfg = load_config(config_path)
-    total_n = int(total if total is not None else cfg.total)
-    workers_n = int(workers if workers is not None else cfg.workers)
+    cfg: Config = load_config(config_path)
+    total_n = _resolve_run_count(total, cfg.total)
+    workers_n = _resolve_run_count(workers, cfg.workers)
+
     if total_n < 1:
         raise ValueError("注册总数 total 必须 >= 1")
     if workers_n < 1:
@@ -235,6 +249,7 @@ def run_batch(
         )
         ok_count, fail_count = o, f
     else:
+
         def task(worker_id: int) -> tuple[int, int]:
             wcfg = with_worker_profile(cfg, worker_id, workers_n)
             return run_worker_batch(
@@ -254,7 +269,7 @@ def run_batch(
             for fut in as_completed(futures):
                 try:
                     o, f = fut.result()
-                except Exception as exc:
+                except _UI_ERRORS as exc:
                     _log(f"[失败] worker 异常：{exc}")
                     o, f = 0, 1
                 ok_count += o
@@ -306,7 +321,10 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         print(f"[错误] {exc}", file=sys.stderr)
         return 2
-    except Exception as exc:
+    except _UI_ERRORS as exc:
+        print(f"[错误] {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt as exc:
         print(f"[错误] {exc}", file=sys.stderr)
         return 1
 

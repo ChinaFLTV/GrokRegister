@@ -1,0 +1,9 @@
+{
+  "include": ["."],
+  "exclude": [".venv", "**/__pycache__", "chrome-profile", "**/chrome-profile/**"],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "reportGeneralTypeIssues": true
+}

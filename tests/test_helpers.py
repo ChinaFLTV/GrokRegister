@@ -167,6 +167,10 @@ csv_path = "accounts.csv"
     assert cfg.output_type == "cpa"
     assert cfg.csv_path == "accounts.csv"
     assert cfg.output_path == ""
+    assert cfg.cpa_http_timeout_sec == 15
+    assert cfg.cpa_poll_timeout_sec == 60
+    assert cfg.cpa_max_retries == 8
+    assert cfg.cpa_retry_base_sec == 15
 
 
 def test_load_output_type_cpa(tmp_path: Path):

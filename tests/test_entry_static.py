@@ -89,8 +89,14 @@ def test_shipped_sequence_present_in_source():
 
     cpa_src = (ROOT / "cpa_output.py").read_text(encoding="utf-8")
     assert "grok-" in cpa_src
-    assert "sso_to_token" in cpa_src
-    assert "token_to_cliproxy_entry" in cpa_src
+    assert "request_device_code" in cpa_src
+    assert "exchange_sso_for_oauth_token" in cpa_src
+    assert "build_cpa_entry" in cpa_src
+    assert "write_cpa_account_file" in cpa_src
+    assert "from sso2cpa" not in cpa_src
+    assert "import sso2cpa" not in cpa_src
+    assert not (ROOT / "sso2cpa.py").exists()
+    assert "import requests" in cpa_src
 
     # 密钥/域名应在配置文件中，而非写死为代码唯一来源
     assert 'domain = "fltv.asia"' in config_src

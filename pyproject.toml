@@ -1,0 +1,16 @@
+[project]
+name = "grok-register"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "playwright>=1.40.0",
+  "requests>=2.31.0",
+  "curl-cffi>=0.6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.ruff.lint]
+# 浏览器自动化大量 except 兜底
+ignore = ["BLE001"]

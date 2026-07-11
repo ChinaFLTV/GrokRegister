@@ -56,6 +56,10 @@ def _cfg(**overrides: Any) -> Config:
         output_type="csv",
         csv_path="accounts.csv",
         output_path="",
+        cpa_http_timeout_sec=15,
+        cpa_poll_timeout_sec=60,
+        cpa_max_retries=8,
+        cpa_retry_base_sec=15,
     )
     return replace(base, **overrides) if overrides else base
 

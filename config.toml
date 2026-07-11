@@ -66,6 +66,14 @@ between_rounds_ms = 800
 otp_key_delay_ms = 30
 # 打开注册页失败（如 net::ERR_ABORTED）时的最大重试次数
 goto_retries = 3
+# cpa：OIDC HTTP 单次超时（秒）
+cpa_http_timeout_sec = 15
+# cpa：轮询 access_token 最长等待（秒）
+cpa_poll_timeout_sec = 60
+# cpa：Device Flow 整轮最大重试次数
+cpa_max_retries = 8
+# cpa：重试基础退避秒数（会指数放大）
+cpa_retry_base_sec = 15
 
 # -----------------------------------------------------------------------------
 # [signup] 浏览器与注册页

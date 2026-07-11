@@ -94,7 +94,7 @@ def is_unseen_xai_confirmation(
     cfg: Config,
     target_email: str | None = None,
 ) -> bool:
-    if msg.get("seen") is True:
+    if msg.get("seen"):
         return False
     if _from_address(msg) != cfg.from_address.lower():
         return False
@@ -152,7 +152,8 @@ def poll_for_confirmation_code(
                 code = extract_confirmation_code(str(selected.get("subject") or ""))
                 mark(cfg, token, msg_id)
                 return code
-        except Exception as exc:  # 轮询期间网络抖动：超时前继续重试
+        except (requests.RequestException, RuntimeError, ValueError, OSError, TimeoutError) as exc:
+            # 轮询期间网络抖动：超时前继续重试
             last_error = exc
 
         if now_fn() >= deadline:
