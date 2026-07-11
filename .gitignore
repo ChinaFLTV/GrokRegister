@@ -1,8 +1,23 @@
-.venv/
+# 运行产物 / 敏感凭证（勿提交）
+# CPA 默认输出目录：yyyyMMdd-HHmm-{序号}/
+20[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]-*/
+auth_out/
+accounts.csv
+*.json.tmp
+*.log
+
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.venv/
+venv/
+
+# IDE / 本地
 .idea/
-accounts.csv
-*.log
+.vscode/
+*.swp
+.DS_Store
+
+# 浏览器 Profile
 chrome-profile/

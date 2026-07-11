@@ -64,3 +64,17 @@ Before running, set at least these three in `config.toml`:
 | Inbox password | `[duckmail].password` | Password for that duckmail mailbox |
 
 For everything else (concurrency, output, browser, timeouts, etc.), see comments in `config.toml`.
+
+---
+
+## Disclaimer
+
+This project is for learning and personal technical research only. By using it, you acknowledge and agree that:
+
+1. **Comply with terms and law.** You are solely responsible for ensuring your use complies with the terms of service of xAI/Grok, Cloudflare, email providers, and all applicable laws. Do not use it for bulk abuse, evasion of security controls, infringement, or any illegal purpose.
+2. **Use at your own risk.** Automated signup and capturing cookies/tokens may result in account bans, limited access, or legal consequences. Authors and contributors accept no liability for any direct or indirect damages.
+3. **No warranty.** The software is provided “as is,” without guarantees of availability, stability, or compatibility with third-party APIs. Failures or losses due to API changes are your responsibility.
+4. **Protect credentials.** Generated SSO cookies, access tokens, refresh tokens, and passwords are sensitive. Store them securely; do not commit them to public repositories or share them.
+5. **Unofficial.** This project is not affiliated with, endorsed by, or an official product of xAI or Grok.
+
+If you do not agree, do not download, use, or distribute this project.

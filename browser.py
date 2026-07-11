@@ -17,7 +17,7 @@ from playwright.sync_api import (
 )
 
 from config import Config
-from helpers import normalize_otp_chars
+from helpers import normalize_otp_chars, random_password
 
 # get_by_role 常用 role（避免 str 与 Playwright Literal 不兼容）
 AriaRole = Literal["button", "link", "textbox", "checkbox", "radio", "heading"]
@@ -203,33 +203,59 @@ def _page_form_error_snippet(page: Page, limit: int = 240) -> str:
         body = page.locator("body").inner_text(timeout=2000) or ""
     except _UI_ERRORS:
         return ""
-    markers = (
+    # 纯表单项标签不算错误（否则「密码」标签会误报）
+    label_only = {
+        "password",
+        "password*",
+        "密码",
+        "密码*",
+        "confirm password",
+        "确认密码",
+        "first name",
+        "last name",
+        "名",
+        "姓",
+        "email",
+        "邮箱",
+    }
+    # 更像真实校验失败的关键词
+    error_markers = (
         "required",
         "invalid",
         "error",
         "must",
         "at least",
-        "password",
+        "too short",
+        "too weak",
+        "does not meet",
+        "not strong",
+        "incorrect",
         "必填",
         "无效",
         "错误",
         "至少",
-        "密码",
         "请填写",
         "不能为空",
+        "不符合",
+        "过短",
+        "太短",
+        "太弱",
+        "强度",
     )
-    lines = []
+    lines: list[str] = []
     for line in body.splitlines():
         s = line.strip()
         if not s or len(s) > 120:
             continue
+        norm = s.lower().rstrip("*:：")
+        if norm in label_only or s in label_only:
+            continue
         low = s.lower()
-        if any(m in low for m in markers) or any(m in s for m in markers):
+        if any(m in low for m in error_markers) or any(m in s for m in error_markers):
             lines.append(s)
         if len(lines) >= 6:
             break
-    text = " | ".join(lines)
-    return text[:limit]
+    return " | ".join(lines)[:limit]
 
 
 def is_cloudflare_blocked(page: Page) -> bool:
@@ -1017,28 +1043,46 @@ def _fill_complete_form_fields(
     except _UI_ERRORS:
         pass
 
-    # 密码（含确认密码）
+    # 密码（含确认密码）：全部可见框写入并核对
     pw_fields = page.locator(PASSWORD_INPUT)
     pw_fields.first.wait_for(state="visible", timeout=cfg.fill_timeout_ms)
     n_pw = pw_fields.count()
     for i in range(min(n_pw, 3)):
         try:
             loc = pw_fields.nth(i)
-            if loc.is_visible():
+            if not loc.is_visible():
+                continue
+            _react_fill(loc, password)
+            # 写完再读一遍，不一致则强制再写
+            try:
+                got = (loc.input_value(timeout=800) or "").strip()
+            except _UI_ERRORS:
+                got = ""
+            if got != password:
                 _react_fill(loc, password)
         except _UI_ERRORS:
             pass
 
     _tick_optional_checkboxes(page)
 
-    # 校验
+    # 校验：至少一个密码框有完整值
     try:
         pw_val = (pw_fields.first.input_value(timeout=1000) or "").strip()
     except _UI_ERRORS:
         pw_val = ""
     if not pw_val:
         raise RuntimeError("密码框写入失败（值为空）")
-
+    if pw_val != password:
+        # 再强写第一框
+        try:
+            _react_fill(pw_fields.first, password)
+            pw_val = (pw_fields.first.input_value(timeout=800) or "").strip()
+        except _UI_ERRORS:
+            pass
+        if pw_val != password:
+            raise RuntimeError(
+                f"密码框写入不一致（期望 len={len(password)} 实际 len={len(pw_val)}）"
+            )
     # 至少一个姓名有值（有的布局 first/last 选择器对不上）
     name_ok = False
     try:
@@ -1120,7 +1164,10 @@ def complete_registration(
         first_name: str,
         last_name: str,
         password: str,
-) -> None:
+) -> str:
+    """
+    填写完成注册表单并提交。返回实际采用的密码（校验失败重试时可能换新密码）。
+    """
     if _page_still_on_verify(page):
         raise RuntimeError(
             "仍在「验证您的邮箱」页面，无法填写姓名/密码。请先成功确认邮箱验证码。"
@@ -1133,40 +1180,54 @@ def complete_registration(
             f"未出现密码输入框，无法完成注册。当前 url={page.url!r}"
         ) from exc
 
-    def _fill_and_submit(*, label: str) -> None:
+    used_password = password
+
+    def _fill_and_submit(*, label: str, pw: str) -> None:
         print(f"[信息] {label}…", flush=True)
-        _fill_complete_form_fields(page, cfg, first_name, last_name, password)
+        _fill_complete_form_fields(page, cfg, first_name, last_name, pw)
         page.wait_for_timeout(max(100, cfg.after_otp_filled_ms))
         _submit_complete_registration(page, cfg)
 
-    _fill_and_submit(label="填写并提交完成注册表单")
+    _fill_and_submit(label="填写并提交完成注册表单", pw=used_password)
 
-    # 等待成功；必要时整表重填再提交一次
+    # 等待成功；必要时整表重填再提交（可换新密码）
     poll_ms = 300
     total_ms = max(10000, min(int(cfg.timeout_ms), 28000))
     elapsed = 0
-    retried = False
+    retry_count = 0
+    max_retries = 2
     while elapsed <= total_ms:
         if registration_success_signal(page):
             print(f"[信息] 完成注册已生效 url={page.url!r}", flush=True)
-            return
+            return used_password
         if not _password_form_visible(page) and not _is_signup_or_incomplete_url(
                 page.url or ""
         ):
             print(f"[信息] 完成注册表单已离开 url={page.url!r}", flush=True)
-            return
+            return used_password
 
-        if not retried and elapsed >= 3000 and _password_form_visible(page):
+        if (
+                retry_count < max_retries
+                and elapsed >= 3000 * (retry_count + 1)
+                and _password_form_visible(page)
+        ):
             err = _page_form_error_snippet(page)
             if err:
                 print(f"[警告] 页面可能存在校验提示：{err}", flush=True)
-            print("[信息] 仍在完成注册表单，重新填写并再次提交…", flush=True)
+            # 第二次起换新密码，规避策略拒收 / 半写入
+            if retry_count >= 1 or (err and ("密码" in err or "password" in err.lower())):
+                used_password = random_password()
+                print(
+                    f"[信息] 使用新密码重试完成注册（len={len(used_password)}）…",
+                    flush=True,
+                )
+            else:
+                print("[信息] 仍在完成注册表单，重新填写并再次提交…", flush=True)
             try:
-                _fill_and_submit(label="重试完成注册")
+                _fill_and_submit(label="重试完成注册", pw=used_password)
             except _UI_ERRORS as exc:
                 print(f"[警告] 重试提交失败：{exc}", flush=True)
-            retried = True
-
+            retry_count += 1
         page.wait_for_timeout(poll_ms)
         elapsed += poll_ms
 
@@ -1229,19 +1290,21 @@ def signup_on_page(
         password: str,
         *,
         sign_out: bool = True,
-) -> str:
+) -> tuple[str, str]:
     """
     在已打开的页面上完成一整轮注册并采集 SSO。
     每轮会重新打开注册页（可复用同一浏览器，无需关闭）。
 
     时序保证：只有在成功拿到非空 SSO 之后，才执行正式登出。
-    返回采集到的 SSO Cookie 值。
+    返回 (SSO Cookie, 实际采用的密码)；完成注册若换密重试，密码可能与入参不同。
     """
     open_signup_and_submit_email(page, cfg, email)
     page.wait_for_timeout(cfg.after_email_submit_ms)
     code = code_provider()
     fill_verification_code(page, code, cfg)
-    complete_registration(page, cfg, first_name, last_name, password)
+    used_password = complete_registration(
+        page, cfg, first_name, last_name, password
+    )
     # 完成注册后站点会自动跳到 grok.com；等待跳转并采集 sso（不要主动 goto）
     settle_page(page, cfg)
     sso = capture_sso_from_grok(page, cfg)
@@ -1253,7 +1316,7 @@ def signup_on_page(
         print("[信息] 已拿到 SSO，开始正式登出…", flush=True)
         sign_out_session(page, cfg)
         page.wait_for_timeout(max(0, cfg.between_rounds_ms))
-    return sso
+    return sso, used_password
 
 
 def run_browser_signup(
@@ -1263,8 +1326,8 @@ def run_browser_signup(
         first_name: str,
         last_name: str,
         password: str,
-) -> str:
-    """单轮便捷入口：启动浏览器 → 注册取 SSO → 登出 → 关闭。返回 SSO Cookie。"""
+) -> tuple[str, str]:
+    """单轮便捷入口：启动浏览器 → 注册取 SSO → 登出 → 关闭。返回 (SSO, 密码)。"""
     with browser_session(cfg) as page:
         return signup_on_page(
             page, cfg, email, code_provider, first_name, last_name, password

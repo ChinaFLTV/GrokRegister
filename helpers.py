@@ -50,19 +50,48 @@ def random_name(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_lowercase, k=length)).capitalize()
 
 
-def random_password(length: int = 14) -> str:
-    # 至少包含大写、小写、数字、特殊字符，降低偶发密码策略失败
-    specials = "!@#$%&*"
-    parts = [
-        random.choice(string.ascii_uppercase),
-        random.choice(string.ascii_lowercase),
-        random.choice(string.digits),
-        random.choice(specials),
-    ]
-    pool = CHARSET + specials
-    parts.extend(random.choices(pool, k=max(0, length - len(parts))))
-    random.shuffle(parts)
-    return "".join(parts)
+def random_password(length: int = 16) -> str:
+    """
+    生成符合常见站点策略的密码（xAI 完成注册页偶发拒弱密码）。
+    保证：长度>=12、大小写+数字+特殊字符各至少 2 个；避免 3 连同字符。
+    """
+    if length < 12:
+        length = 12
+    # 避开 $ 等易触发前端/编码问题的符号，保留常用可接受特殊字符
+    specials = "!@#%&*"
+    letters_up = string.ascii_uppercase
+    letters_lo = string.ascii_lowercase
+    digits = string.digits
+    pool = letters_up + letters_lo + digits + specials
+
+    for _ in range(40):
+        parts = [
+            random.choice(letters_up),
+            random.choice(letters_up),
+            random.choice(letters_lo),
+            random.choice(letters_lo),
+            random.choice(digits),
+            random.choice(digits),
+            random.choice(specials),
+            random.choice(specials),
+        ]
+        parts.extend(random.choices(pool, k=max(0, length - len(parts))))
+        random.shuffle(parts)
+        pw = "".join(parts)
+        if re.search(r"(.)\1\1", pw):
+            continue
+        if not any(c in letters_up for c in pw):
+            continue
+        if not any(c in letters_lo for c in pw):
+            continue
+        if not any(c in digits for c in pw):
+            continue
+        if not any(c in specials for c in pw):
+            continue
+        return pw
+
+    # 极端兜底（理论上走不到）
+    return "Aa1!" + "".join(random.choices(pool, k=max(8, length - 4)))
 
 
 def _migrate_legacy_csv_if_needed(csv_path: Path) -> None:

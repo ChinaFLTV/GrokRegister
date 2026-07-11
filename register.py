@@ -99,7 +99,7 @@ def _register_one_on_page(
     sso_got = False
     try:
         # 先完成注册并拿到 SSO；sign_out=False，等写盘成功后再正式登出
-        sso = signup_on_page(
+        sso, password = signup_on_page(
             page,
             cfg,
             email,
