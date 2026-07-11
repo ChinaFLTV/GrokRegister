@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_entry_imports_and_main_exists():
     assert callable(register.main)
-    assert callable(register.run_once)
+    assert callable(register.run_batch)
 
 
 def test_shipped_sequence_present_in_source():
@@ -37,11 +37,26 @@ def test_shipped_sequence_present_in_source():
 
     assert "load_config" in entry
     assert "append_account_csv" in entry
-    assert "run_browser_signup" in entry
+    assert "signup_on_page" in entry or "signup_on_page" in browser_src
+    assert "browser_session" in entry or "browser_session" in browser_src
+    assert "run_worker_batch" in entry
     assert "poll_for_confirmation_code" in entry
     assert "warm_profile" in entry or "--warm-profile" in entry
+    assert "run_batch" in entry
+    assert "--total" in entry or "total" in entry
+    assert "ThreadPoolExecutor" in entry
     assert "launch_persistent_context" in browser_src
+    assert "safe_goto" in browser_src
+    assert "ERR_ABORTED" in browser_src
+    assert "sign_out_session" in browser_src
+    assert "sign-out" in browser_src or "sign_out_url" in browser_src
+    assert "复用" in entry or "browser_session" in entry
     assert "user_data_dir" in config_src
+    assert "[timing]" in config_src
+    assert "[run]" in config_src
+    assert "total = 5" in config_src
+    assert "between_rounds_ms" in config_src
+    assert "goto_retries" in config_src
 
     # 密钥/域名应在配置文件中，而非写死为代码唯一来源
     assert 'domain = "fltv.asia"' in config_src

@@ -43,13 +43,19 @@ token_endpoint = "/token"
 messages_endpoint = "/messages"
 from_address = "noreply@x.ai"
 subject_marker = "xAI confirmation code"
-poll_interval_sec = 5
+
+[timing]
+poll_interval_sec = 2
 poll_timeout_sec = 120
+timeout_ms = 1000
 
 [signup]
 url = "https://accounts.x.ai/sign-up"
 headless = true
-timeout_ms = 1000
+
+[run]
+total = 5
+workers = 1
 
 [output]
 csv_path = "accounts.csv"
@@ -91,3 +97,51 @@ def test_csv_append_columns_and_no_clobber(tmp_path: Path):
     assert rows[1] == ["a@x.test", "pw1", "Li", "Ming"]
     assert rows[2] == ["b@x.test", "pw2", "Wang", "Hua"]
     assert len(rows) == 3
+
+
+def test_csv_append_concurrent(tmp_path: Path):
+    import concurrent.futures
+
+    path = tmp_path / "accounts.csv"
+
+    def write_one(i: int) -> None:
+        append_account_csv(path, f"u{i}@x.test", f"pw{i}", f"L{i}", f"F{i}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write_one, range(20)))
+
+    with path.open(encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == list(CSV_COLUMNS)
+    assert len(rows) == 21
+    emails = {r[0] for r in rows[1:]}
+    assert emails == {f"u{i}@x.test" for i in range(20)}
+
+
+def test_load_run_and_timing_defaults(tmp_path: Path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        """
+[email]
+domain = "example.test"
+local_part_length = 8
+[duckmail]
+address = "a@example.test"
+password = "p"
+base_url = "https://example.test/api/mail"
+token_endpoint = "/token"
+messages_endpoint = "/messages"
+from_address = "noreply@x.ai"
+subject_marker = "xAI confirmation code"
+[signup]
+url = "https://accounts.x.ai/sign-up"
+[output]
+csv_path = "accounts.csv"
+""",
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.total == 5
+    assert cfg.workers == 1
+    assert cfg.poll_interval_sec == 2
+    assert cfg.after_email_submit_ms == 500

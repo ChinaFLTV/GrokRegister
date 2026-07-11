@@ -31,10 +31,26 @@ def _cfg(**overrides: Any) -> Config:
         poll_interval_sec=5,
         poll_timeout_sec=120,
         signup_url="https://accounts.x.ai/sign-up",
+        sign_out_url="https://grok.com/sign-out",
+        sign_out_enabled=True,
+        clear_auth_cookies=True,
         headless=True,
         timeout_ms=1000,
         browser_channel="chrome",
         user_data_dir="chrome-profile",
+        after_email_submit_ms=500,
+        after_otp_filled_ms=150,
+        after_otp_submit_ms=400,
+        after_complete_ms=500,
+        after_sign_out_ms=300,
+        between_rounds_ms=800,
+        otp_key_delay_ms=30,
+        click_timeout_ms=5000,
+        fill_timeout_ms=12000,
+        sign_out_timeout_ms=15000,
+        goto_retries=3,
+        total=5,
+        workers=1,
         csv_path="accounts.csv",
     )
     return replace(base, **overrides) if overrides else base
@@ -44,6 +60,7 @@ FIXTURE_MESSAGES = [
     {
         "id": "20260710T190215-8190",
         "from": {"name": "xAI", "address": "noreply@x.ai"},
+        "to": [{"address": "codaily4@fltv.asia"}],
         "subject": "A45-WU6 xAI confirmation code",
         "seen": False,
         "createdAt": "2026-07-10T19:02:15.040264967Z",
@@ -51,6 +68,7 @@ FIXTURE_MESSAGES = [
     {
         "id": "20260710T185115-7690",
         "from": {"name": "Cloudflare", "address": "noreply@notify.cloudflare.com"},
+        "to": [{"address": "codaily@duckmail.sbs"}],
         "subject": "[Cloudflare]: Verify Email Routing address",
         "seen": True,
         "createdAt": "2026-07-10T18:51:15.665753474Z",
@@ -58,6 +76,7 @@ FIXTURE_MESSAGES = [
     {
         "id": "20260710T180000-1000",
         "from": {"name": "xAI", "address": "noreply@x.ai"},
+        "to": [{"address": "other@fltv.asia"}],
         "subject": "OLD1-ABC xAI confirmation code",
         "seen": False,
         "createdAt": "2026-07-10T18:00:00.000000000Z",
@@ -73,12 +92,25 @@ def test_pick_latest_unseen_xai_confirmation():
     assert extract_confirmation_code(picked["subject"]) == "A45-WU6"
 
 
+def test_pick_filters_by_target_email():
+    cfg = _cfg()
+    picked = pick_latest_confirmation(
+        FIXTURE_MESSAGES, cfg, target_email="other@fltv.asia"
+    )
+    assert picked is not None
+    assert picked["id"] == "20260710T180000-1000"
+    assert pick_latest_confirmation(
+        FIXTURE_MESSAGES, cfg, target_email="nobody@fltv.asia"
+    ) is None
+
+
 def test_pick_skips_seen_and_non_xai():
     cfg = _cfg()
     msgs = [
         {
             "id": "1",
             "from": {"address": "noreply@x.ai"},
+            "to": [{"address": "a@fltv.asia"}],
             "subject": "AA xAI confirmation code",
             "seen": True,
             "createdAt": "2026-07-10T20:00:00Z",
@@ -86,6 +118,7 @@ def test_pick_skips_seen_and_non_xai():
         {
             "id": "2",
             "from": {"address": "other@example.com"},
+            "to": [{"address": "a@fltv.asia"}],
             "subject": "BB xAI confirmation code",
             "seen": False,
             "createdAt": "2026-07-10T21:00:00Z",
@@ -95,12 +128,10 @@ def test_pick_skips_seen_and_non_xai():
 
 
 def test_token_parse_shape():
-    # drive request_json path with a stub transport via monkeypatch on requests
     sample = {
         "id": "08f23b1f9967134149358a707b20e56a",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.example",
     }
-    # unit-level: parse contract of fetch_token via injected request
     import mail as mail_mod
 
     calls: list[tuple] = []
@@ -148,6 +179,7 @@ def test_poll_finds_code_and_marks_read():
     code = poll_for_confirmation_code(
         cfg,
         "tok",
+        target_email="codaily4@fltv.asia",
         sleep_fn=sleep,
         now_fn=now,
         fetch_fn=fetch,
@@ -170,7 +202,7 @@ def test_poll_timeout_without_full_sleep():
 
     def fetch(_cfg, _token):
         fetches["n"] += 1
-        return []  # 永不匹配
+        return []
 
     with pytest.raises(TimeoutError):
         poll_for_confirmation_code(
@@ -200,12 +232,17 @@ token_endpoint = "/token"
 messages_endpoint = "/messages"
 from_address = "noreply@x.ai"
 subject_marker = "xAI confirmation code"
-poll_interval_sec = 5
-poll_timeout_sec = 120
+[timing]
+poll_interval_sec = 2
+poll_timeout_sec = 90
+timeout_ms = 30000
+after_email_submit_ms = 400
 [signup]
 url = "https://accounts.x.ai/sign-up"
 headless = true
-timeout_ms = 1000
+[run]
+total = 5
+workers = 2
 [output]
 csv_path = "out.csv"
 """,
@@ -214,5 +251,9 @@ csv_path = "out.csv"
     cfg = load_config(p)
     assert cfg.email_domain == "fltv.asia"
     assert cfg.duckmail_password == "secret-pass"
-    assert cfg.poll_interval_sec == 5
-    assert cfg.poll_timeout_sec == 120
+    assert cfg.poll_interval_sec == 2
+    assert cfg.poll_timeout_sec == 90
+    assert cfg.timeout_ms == 30000
+    assert cfg.after_email_submit_ms == 400
+    assert cfg.total == 5
+    assert cfg.workers == 2

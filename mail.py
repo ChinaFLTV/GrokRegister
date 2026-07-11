@@ -76,20 +76,46 @@ def _from_address(msg: dict[str, Any]) -> str:
     return str(from_field).lower()
 
 
-def is_unseen_xai_confirmation(msg: dict[str, Any], cfg: Config) -> bool:
+def _to_addresses(msg: dict[str, Any]) -> list[str]:
+    to_field = msg.get("to") or []
+    if isinstance(to_field, dict):
+        to_field = [to_field]
+    addrs: list[str] = []
+    for item in to_field:
+        if isinstance(item, dict):
+            addrs.append(str(item.get("address") or "").lower())
+        else:
+            addrs.append(str(item).lower())
+    return addrs
+
+
+def is_unseen_xai_confirmation(
+    msg: dict[str, Any],
+    cfg: Config,
+    target_email: str | None = None,
+) -> bool:
     if msg.get("seen") is True:
         return False
     if _from_address(msg) != cfg.from_address.lower():
         return False
     subject = str(msg.get("subject") or "")
-    return cfg.subject_marker.lower() in subject.lower()
+    if cfg.subject_marker.lower() not in subject.lower():
+        return False
+    if target_email:
+        want = target_email.strip().lower()
+        if want not in _to_addresses(msg):
+            return False
+    return True
 
 
 def pick_latest_confirmation(
     messages: list[dict[str, Any]],
     cfg: Config,
+    target_email: str | None = None,
 ) -> dict[str, Any] | None:
-    matches = [m for m in messages if is_unseen_xai_confirmation(m, cfg)]
+    matches = [
+        m for m in messages if is_unseen_xai_confirmation(m, cfg, target_email)
+    ]
     if not matches:
         return None
 
@@ -103,12 +129,13 @@ def poll_for_confirmation_code(
     cfg: Config,
     token: str,
     *,
+    target_email: str | None = None,
     sleep_fn: Callable[[float], None] = time.sleep,
     now_fn: Callable[[], float] = time.monotonic,
     fetch_fn: Callable[[Config, str], list[dict[str, Any]]] | None = None,
     mark_fn: Callable[[Config, str, str], Any] | None = None,
 ) -> str:
-    """轮询直到出现未读 xAI 验证码邮件，标为已读并返回验证码。"""
+    """轮询直到出现未读 xAI 验证码邮件（可按收件人过滤），标为已读并返回验证码。"""
     fetch = fetch_fn or fetch_messages
     mark = mark_fn or mark_message_read
     deadline = now_fn() + cfg.poll_timeout_sec
@@ -117,7 +144,7 @@ def poll_for_confirmation_code(
     while True:
         try:
             messages = fetch(cfg, token)
-            selected = pick_latest_confirmation(messages, cfg)
+            selected = pick_latest_confirmation(messages, cfg, target_email)
             if selected is not None:
                 msg_id = str(selected.get("id") or selected.get("msgid") or "")
                 if not msg_id:
@@ -130,7 +157,8 @@ def poll_for_confirmation_code(
 
         if now_fn() >= deadline:
             detail = f" 最后错误：{last_error}" if last_error else ""
+            who = f" 收件人={target_email}" if target_email else ""
             raise TimeoutError(
-                f"{cfg.poll_timeout_sec} 秒内未收到 xAI 验证码邮件{detail}"
+                f"{cfg.poll_timeout_sec} 秒内未收到 xAI 验证码邮件{who}{detail}"
             )
         sleep_fn(cfg.poll_interval_sec)

@@ -6,11 +6,15 @@ import csv
 import random
 import re
 import string
+import threading
 from pathlib import Path
 
 CHARSET = string.ascii_letters + string.digits
 CSV_COLUMNS = ("邮箱账号", "密码", "姓", "名")
 CODE_RE = re.compile(r"^([A-Za-z0-9-]+)\s+xAI confirmation code", re.I)
+
+# 进程内 CSV 追加互斥（并发注册）
+_csv_lock = threading.Lock()
 
 
 def generate_local_part(length: int = 8) -> str:
@@ -62,10 +66,13 @@ def append_account_csv(
     last_name: str,
     first_name: str,
 ) -> None:
+    """线程安全追加一行账号（带锁，避免并发写坏 CSV）。"""
     csv_path = Path(path)
-    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
-    with csv_path.open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if write_header:
-            writer.writerow(CSV_COLUMNS)
-        writer.writerow([email, password, last_name, first_name])
+    with _csv_lock:
+        write_header = not csv_path.exists() or csv_path.stat().st_size == 0
+        with csv_path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(CSV_COLUMNS)
+            writer.writerow([email, password, last_name, first_name])
+            f.flush()
