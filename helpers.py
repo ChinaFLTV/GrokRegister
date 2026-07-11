@@ -10,7 +10,10 @@ import threading
 from pathlib import Path
 
 CHARSET = string.ascii_letters + string.digits
-CSV_COLUMNS = ("邮箱账号", "密码", "姓", "名")
+# 列顺序：邮箱账号, 密码, SSO, 姓, 名
+CSV_COLUMNS = ("邮箱账号", "密码", "SSO", "姓", "名")
+# 历史表头（无 SSO 列），追加时会自动迁移
+_LEGACY_CSV_COLUMNS = ("邮箱账号", "密码", "姓", "名")
 CODE_RE = re.compile(r"^([A-Za-z0-9-]+)\s+xAI confirmation code", re.I)
 
 # 进程内 CSV 追加互斥（并发注册）
@@ -47,32 +50,64 @@ def random_name(length: int = 6) -> str:
     return "".join(random.choices(string.ascii_lowercase, k=length)).capitalize()
 
 
-def random_password(length: int = 12) -> str:
-    # 至少包含一个大写、一个小写、一个数字，满足常见密码规则
+def random_password(length: int = 14) -> str:
+    # 至少包含大写、小写、数字、特殊字符，降低偶发密码策略失败
+    specials = "!@#$%&*"
     parts = [
         random.choice(string.ascii_uppercase),
         random.choice(string.ascii_lowercase),
         random.choice(string.digits),
+        random.choice(specials),
     ]
-    parts.extend(random.choices(CHARSET, k=max(0, length - len(parts))))
+    pool = CHARSET + specials
+    parts.extend(random.choices(pool, k=max(0, length - len(parts))))
     random.shuffle(parts)
     return "".join(parts)
+
+
+def _migrate_legacy_csv_if_needed(csv_path: Path) -> None:
+    """若已有无 SSO 列的旧 CSV，原地改写为新表头（旧行 SSO 置空）。"""
+    if not csv_path.exists() or csv_path.stat().st_size == 0:
+        return
+    with csv_path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        return
+    header = tuple(rows[0])
+    if header == CSV_COLUMNS:
+        return
+    if header != _LEGACY_CSV_COLUMNS:
+        return
+    migrated = [list(CSV_COLUMNS)]
+    for row in rows[1:]:
+        # 旧: 邮箱, 密码, 姓, 名  →  新: 邮箱, 密码, SSO, 姓, 名
+        email = row[0] if len(row) > 0 else ""
+        password = row[1] if len(row) > 1 else ""
+        last_name = row[2] if len(row) > 2 else ""
+        first_name = row[3] if len(row) > 3 else ""
+        migrated.append([email, password, "", last_name, first_name])
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerows(migrated)
+        f.flush()
 
 
 def append_account_csv(
     path: str | Path,
     email: str,
     password: str,
+    sso: str,
     last_name: str,
     first_name: str,
 ) -> None:
-    """线程安全追加一行账号（带锁，避免并发写坏 CSV）。"""
+    """线程安全追加一行账号（带锁，避免并发写坏 CSV）。列：邮箱,密码,SSO,姓,名。"""
     csv_path = Path(path)
     with _csv_lock:
+        _migrate_legacy_csv_if_needed(csv_path)
         write_header = not csv_path.exists() or csv_path.stat().st_size == 0
         with csv_path.open("a", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             if write_header:
                 writer.writerow(CSV_COLUMNS)
-            writer.writerow([email, password, last_name, first_name])
+            writer.writerow([email, password, sso, last_name, first_name])
             f.flush()

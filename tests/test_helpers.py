@@ -87,16 +87,33 @@ def test_normalize_otp_chars():
 
 def test_csv_append_columns_and_no_clobber(tmp_path: Path):
     path = tmp_path / "accounts.csv"
-    append_account_csv(path, "a@x.test", "pw1", "Li", "Ming")
-    append_account_csv(path, "b@x.test", "pw2", "Wang", "Hua")
+    append_account_csv(path, "a@x.test", "pw1", "sso-aaa", "Li", "Ming")
+    append_account_csv(path, "b@x.test", "pw2", "sso-bbb", "Wang", "Hua")
 
     with path.open(encoding="utf-8") as f:
         rows = list(csv.reader(f))
 
     assert rows[0] == list(CSV_COLUMNS)
-    assert rows[1] == ["a@x.test", "pw1", "Li", "Ming"]
-    assert rows[2] == ["b@x.test", "pw2", "Wang", "Hua"]
+    assert rows[0] == ["邮箱账号", "密码", "SSO", "姓", "名"]
+    assert rows[1] == ["a@x.test", "pw1", "sso-aaa", "Li", "Ming"]
+    assert rows[2] == ["b@x.test", "pw2", "sso-bbb", "Wang", "Hua"]
     assert len(rows) == 3
+
+
+def test_csv_append_migrates_legacy_header(tmp_path: Path):
+    path = tmp_path / "accounts.csv"
+    path.write_text(
+        "邮箱账号,密码,姓,名\nold@x.test,oldpw,OldLast,OldFirst\n",
+        encoding="utf-8",
+    )
+    append_account_csv(path, "new@x.test", "newpw", "sso-new", "NewLast", "NewFirst")
+
+    with path.open(encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+
+    assert rows[0] == ["邮箱账号", "密码", "SSO", "姓", "名"]
+    assert rows[1] == ["old@x.test", "oldpw", "", "OldLast", "OldFirst"]
+    assert rows[2] == ["new@x.test", "newpw", "sso-new", "NewLast", "NewFirst"]
 
 
 def test_csv_append_concurrent(tmp_path: Path):
@@ -105,7 +122,7 @@ def test_csv_append_concurrent(tmp_path: Path):
     path = tmp_path / "accounts.csv"
 
     def write_one(i: int) -> None:
-        append_account_csv(path, f"u{i}@x.test", f"pw{i}", f"L{i}", f"F{i}")
+        append_account_csv(path, f"u{i}@x.test", f"pw{i}", f"sso{i}", f"L{i}", f"F{i}")
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(write_one, range(20)))
@@ -116,6 +133,8 @@ def test_csv_append_concurrent(tmp_path: Path):
     assert len(rows) == 21
     emails = {r[0] for r in rows[1:]}
     assert emails == {f"u{i}@x.test" for i in range(20)}
+    # SSO 列在第 3 列（index 2）
+    assert all(r[2].startswith("sso") for r in rows[1:])
 
 
 def test_load_run_and_timing_defaults(tmp_path: Path):

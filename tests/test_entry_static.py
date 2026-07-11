@@ -50,6 +50,20 @@ def test_shipped_sequence_present_in_source():
     assert "ERR_ABORTED" in browser_src
     assert "sign_out_session" in browser_src
     assert "sign-out" in browser_src or "sign_out_url" in browser_src
+    assert "capture_sso_from_grok" in browser_src
+    assert "extract_sso_cookie" in browser_src
+    assert "grok.com" in browser_src
+    assert "_is_grok_host" in browser_src
+    assert "_is_accounts_account_page" in browser_src
+    assert "registration_success_signal" in browser_src
+    assert "ensure_logged_out_for_signup" in browser_src
+    # 不得再主动 goto grok 采集 SSO
+    capture_body = browser_src.split("def capture_sso_from_grok")[1].split(
+        "def _should_drop_auth_cookie"
+    )[0]
+    assert "safe_goto" not in capture_body
+    assert "sign_out=False" in entry or "sign_out=False" in browser_src
+    assert "SSO 已保存" in entry or "已拿到 SSO" in entry or "已拿到 SSO" in browser_src
     assert "复用" in entry or "browser_session" in entry
     assert "user_data_dir" in config_src
     assert "[timing]" in config_src
@@ -57,6 +71,12 @@ def test_shipped_sequence_present_in_source():
     assert "total = 5" in config_src
     assert "between_rounds_ms" in config_src
     assert "goto_retries" in config_src
+    assert "after_sso_capture_ms" in config_src
+    assert "grok_home_url" in config_src
+
+    helpers = (ROOT / "helpers.py").read_text(encoding="utf-8")
+    assert '"SSO"' in helpers or "'SSO'" in helpers
+    assert "SSO" in helpers
 
     # 密钥/域名应在配置文件中，而非写死为代码唯一来源
     assert 'domain = "fltv.asia"' in config_src
@@ -64,7 +84,6 @@ def test_shipped_sequence_present_in_source():
     assert "7758521" in config_src
 
     # 运营密钥/域名来自 config.toml，不出现在工具模块中
-    helpers = (ROOT / "helpers.py").read_text(encoding="utf-8")
     config_py = (ROOT / "config.py").read_text(encoding="utf-8")
     assert "fltv.asia" not in helpers
     assert "7758521" not in helpers

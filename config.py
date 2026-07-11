@@ -26,6 +26,8 @@ class Config:
     poll_interval_sec: float
     poll_timeout_sec: float
     signup_url: str
+    # 注册成功后打开以采集 SSO Cookie 的页面
+    grok_home_url: str
     # 每轮注册成功后登出（GET），避免复用浏览器时下一轮已登录
     sign_out_url: str
     sign_out_enabled: bool
@@ -40,6 +42,7 @@ class Config:
     after_otp_filled_ms: int
     after_otp_submit_ms: int
     after_complete_ms: int
+    after_sso_capture_ms: int
     after_sign_out_ms: int
     between_rounds_ms: int
     otp_key_delay_ms: int
@@ -87,6 +90,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
             timing.get("poll_timeout_sec", duck.get("poll_timeout_sec", 120))
         ),
         signup_url=str(signup["url"]),
+        grok_home_url=str(signup.get("grok_home_url", "https://grok.com")),
         sign_out_url=str(
             signup.get("sign_out_url", "https://grok.com/sign-out")
         ),
@@ -100,6 +104,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         after_otp_filled_ms=int(timing.get("after_otp_filled_ms", 150)),
         after_otp_submit_ms=int(timing.get("after_otp_submit_ms", 400)),
         after_complete_ms=int(timing.get("after_complete_ms", 500)),
+        after_sso_capture_ms=int(timing.get("after_sso_capture_ms", 800)),
         after_sign_out_ms=int(timing.get("after_sign_out_ms", 300)),
         between_rounds_ms=int(timing.get("between_rounds_ms", 800)),
         otp_key_delay_ms=int(timing.get("otp_key_delay_ms", 30)),

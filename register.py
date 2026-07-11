@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
-from browser import browser_session, signup_on_page, warm_profile
+from browser import browser_session, sign_out_session, signup_on_page, warm_profile
 from config import DEFAULT_CONFIG_PATH, load_config, with_worker_profile
 from helpers import (
     append_account_csv,
@@ -53,10 +53,34 @@ def _register_one_on_page(
         return code
 
     try:
-        signup_on_page(page, cfg, email, code_provider, first_name, last_name, password)
-        append_account_csv(cfg.csv_path, email, password, last_name, first_name)
-        summary = f"{email} / {password} / 姓={last_name} / 名={first_name}"
+        # 先完成注册并拿到 SSO；sign_out=False，等写盘成功后再正式登出
+        sso = signup_on_page(
+            page,
+            cfg,
+            email,
+            code_provider,
+            first_name,
+            last_name,
+            password,
+            sign_out=False,
+        )
+        if not (sso or "").strip():
+            raise RuntimeError("未获取到有效 SSO，本轮不登出、不写盘")
+
+        append_account_csv(
+            cfg.csv_path, email, password, sso, last_name, first_name
+        )
+        sso_preview = f"{sso[:12]}…{sso[-6:]}" if len(sso) > 22 else sso
+        summary = (
+            f"{email} / {password} / SSO={sso_preview} / "
+            f"姓={last_name} / 名={first_name}"
+        )
         _log(f"{tag} [完成] 已保存 → {cfg.csv_path} | {summary}")
+
+        # SSO 已落盘后才正式登出，避免未拿到/未保存 SSO 就清会话
+        _log(f"{tag} [信息] SSO 已保存，开始正式登出…")
+        sign_out_session(page, cfg)
+        page.wait_for_timeout(max(0, cfg.between_rounds_ms))
         return True, summary
     except Exception as exc:
         _log(f"{tag} [失败] {exc}")
