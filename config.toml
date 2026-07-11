@@ -1,0 +1,26 @@
+[email]
+domain = "fltv.asia"
+local_part_length = 8
+
+[duckmail]
+address = "codaily@duckmail.sbs"
+password = "7758521"
+base_url = "https://www.duckmail.sbs/api/mail"
+token_endpoint = "/token"
+messages_endpoint = "/messages"
+from_address = "noreply@x.ai"
+subject_marker = "xAI confirmation code"
+poll_interval_sec = 5
+poll_timeout_sec = 120
+
+[signup]
+url = "https://accounts.x.ai/sign-up"
+headless = false
+timeout_ms = 60000
+# 使用本机 Google Chrome（比 Playwright 自带 Chromium 更不易被拦）
+browser_channel = "chrome"
+# 自动化专用 Profile 目录（勿与正在使用的日常 Chrome 主配置共用）
+user_data_dir = "chrome-profile"
+
+[output]
+csv_path = "accounts.csv"

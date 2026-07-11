@@ -1,0 +1,24 @@
+[email]
+domain = "fltv.asia"
+local_part_length = 8
+
+[duckmail]
+address = "your@duckmail.sbs"
+password = "your-password"
+base_url = "https://www.duckmail.sbs/api/mail"
+token_endpoint = "/token"
+messages_endpoint = "/messages"
+from_address = "noreply@x.ai"
+subject_marker = "xAI confirmation code"
+poll_interval_sec = 5
+poll_timeout_sec = 120
+
+[signup]
+url = "https://accounts.x.ai/sign-up"
+headless = false
+timeout_ms = 60000
+browser_channel = "chrome"
+user_data_dir = "chrome-profile"
+
+[output]
+csv_path = "accounts.csv"
