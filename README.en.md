@@ -78,3 +78,9 @@ This project is for learning and personal technical research only. By using it, 
 5. **Unofficial.** This project is not affiliated with, endorsed by, or an official product of xAI or Grok.
 
 If you do not agree, do not download, use, or distribute this project.
+
+---
+
+## Acknowledgments
+
+This project is shared on the [LinuxDo community](https://linux.do).
