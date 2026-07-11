@@ -9,7 +9,7 @@
 [email]
 # Cloudflare Email Routing 上绑定/验证过的收信域名（@ 后面的部分）
 # 最终注册地址形如：随机本地部分@该域名，邮件经 CF 转发到下方 duckmail
-domain = "fltv.asia"
+domain = "【cf邮箱域名】"
 # 邮箱本地部分（@ 前面）随机字符长度；字符集为大小写字母 + 数字
 local_part_length = 8
 
@@ -18,9 +18,9 @@ local_part_length = 8
 # -----------------------------------------------------------------------------
 [duckmail]
 # 登录 duckmail 的邮箱账号（POST /token 请求体 address）
-address = "codaily@duckmail.sbs"
+address = "【cf邮箱域名转发到的目标邮箱(必须是duckmail)】"
 # 登录 duckmail 的密码（POST /token 请求体 password）
-password = "7758521"
+password = "【目标邮箱密码】"
 # duckmail API 基础地址（后面会拼 ?endpoint=...）
 base_url = "https://www.duckmail.sbs/api/mail"
 # 获取认证 token 的 endpoint 路径（POST）
