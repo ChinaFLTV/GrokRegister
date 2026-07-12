@@ -986,6 +986,340 @@ def _tick_optional_checkboxes(page: Page) -> None:
         pass
 
 
+# ---------------------------------------------------------------------------
+# Cloudflare Turnstile「请验证您是真人」
+# 参考 52pojie：Shadow DOM → iframe → checkbox；切勿 reset 以免重验
+# https://www.52pojie.cn/thread-2097555-1-1.html
+# ---------------------------------------------------------------------------
+
+
+def _turnstile_token_ready(page: Page) -> str:
+    """若已拿到 token 则返回非空字符串。"""
+    try:
+        val = page.evaluate(
+            """() => {
+                try {
+                    if (typeof turnstile !== 'undefined' && turnstile.getResponse) {
+                        const t = turnstile.getResponse();
+                        if (t) return String(t);
+                    }
+                } catch (e) {}
+                const els = document.querySelectorAll(
+                    'input[name="cf-turnstile-response"], input[name="cf_turnstile_response"]'
+                );
+                for (const el of els) {
+                    if (el && el.value && el.value.length > 10) return el.value;
+                }
+                return '';
+            }"""
+        )
+        return str(val or "")
+    except _UI_ERRORS:
+        return ""
+
+
+def _turnstile_status(page: Page) -> str:
+    """
+    返回 Turnstile 状态：
+      ready | verifying | success | failed | expired | unknown | absent
+    """
+    if _turnstile_token_ready(page):
+        return "success"
+    try:
+        texts: list[str] = []
+        try:
+            body = page.locator("body").inner_text(timeout=800) or ""
+            texts.append(body)
+        except _UI_ERRORS:
+            pass
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            try:
+                t = frame.locator("body").inner_text(timeout=400) or ""
+                if t:
+                    texts.append(t)
+            except _UI_ERRORS:
+                continue
+        blob = "\n".join(texts)
+        if "成功" in blob:
+            return "success"
+        if "正在验证" in blob or "Verifying" in blob:
+            return "verifying"
+        if "验证失败" in blob or "Failure" in blob:
+            return "failed"
+        if "验证已过期" in blob or "expired" in blob.lower():
+            return "expired"
+        if "请验证您是真人" in blob or "Verify you are human" in blob:
+            return "ready"
+    except _UI_ERRORS:
+        pass
+    try:
+        if page.locator(
+            'iframe[src*="challenges.cloudflare.com"], '
+            'iframe[src*="turnstile"], '
+            'input[name="cf-turnstile-response"], '
+            ".cf-turnstile, [data-sitekey]"
+        ).count():
+            return "unknown"
+    except _UI_ERRORS:
+        pass
+    return "absent"
+
+
+def _collect_turnstile_rects(page: Page) -> list[dict[str, Any]]:
+    """收集 Turnstile iframe 视口坐标（穿透 open shadow DOM）。"""
+    try:
+        rects = page.evaluate(
+            """() => {
+                const out = [];
+                const pushIframe = (iframe, via) => {
+                    if (!iframe) return;
+                    const r = iframe.getBoundingClientRect();
+                    if (r.width < 40 || r.height < 20) return;
+                    if (r.bottom < 0 || r.right < 0) return;
+                    out.push({
+                        x: r.x, y: r.y, w: r.width, h: r.height,
+                        src: iframe.src || '', via
+                    });
+                };
+                const walk = (root, via) => {
+                    if (!root) return;
+                    root.querySelectorAll('iframe').forEach((f) => {
+                        const src = f.src || '';
+                        if (
+                            src.includes('challenges.cloudflare.com') ||
+                            src.includes('turnstile') ||
+                            src.includes('cdn-cgi/challenge-platform') ||
+                            via.includes('shadow')
+                        ) {
+                            pushIframe(f, via);
+                        }
+                    });
+                    root.querySelectorAll('*').forEach((el) => {
+                        if (el.shadowRoot) walk(el.shadowRoot, via + '/shadow');
+                    });
+                };
+                const input = document.querySelector(
+                    'input[name="cf-turnstile-response"], input[name="cf_turnstile_response"]'
+                );
+                if (input) {
+                    let el = input.parentElement;
+                    for (let i = 0; i < 10 && el; i++) {
+                        if (el.shadowRoot) walk(el.shadowRoot, 'response-parent');
+                        el = el.parentElement;
+                    }
+                }
+                document.querySelectorAll('.cf-turnstile, [data-sitekey]').forEach((host) => {
+                    if (host.shadowRoot) walk(host.shadowRoot, 'widget');
+                    host.querySelectorAll('iframe').forEach((f) => pushIframe(f, 'widget-child'));
+                });
+                walk(document, 'document');
+                const key = (r) => `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.w)}`;
+                const seen = new Set();
+                return out.filter((r) => {
+                    const k = key(r);
+                    if (seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                });
+            }"""
+        )
+        return list(rects) if isinstance(rects, list) else []
+    except _UI_ERRORS:
+        return []
+
+
+def _mouse_click_point(page: Page, x: float, y: float) -> None:
+    page.mouse.move(x, y, steps=5)
+    page.wait_for_timeout(50)
+    page.mouse.down()
+    page.wait_for_timeout(30)
+    page.mouse.up()
+
+
+def _click_turnstile_in_frames(page: Page, cfg: Config) -> bool:
+    for frame in page.frames:
+        if frame == page.main_frame:
+            continue
+        url = (frame.url or "").lower()
+        try:
+            has_box = (
+                frame.locator("label.dxeA5, input[type='checkbox'], span.YFbSK8").count()
+                > 0
+            )
+        except _UI_ERRORS:
+            has_box = False
+        if not has_box and not any(
+            k in url
+            for k in (
+                "challenges.cloudflare.com",
+                "turnstile",
+                "challenge-platform",
+                "cdn-cgi",
+            )
+        ):
+            continue
+        for sel in (
+            "label.dxeA5",
+            "label.dxeA5 input[type='checkbox']",
+            "span.YFbSK8",
+            "input[type='checkbox']",
+        ):
+            try:
+                loc = frame.locator(sel).first
+                box = loc.bounding_box(timeout=1200)
+                if not box or box["width"] <= 0:
+                    loc.click(timeout=2000, force=True)
+                else:
+                    cx = box["x"] + min(12.0, max(6.0, box["width"] * 0.15))
+                    cy = box["y"] + box["height"] / 2
+                    _mouse_click_point(page, cx, cy)
+                print(f"[信息] frame 内点击 Turnstile：{sel}", flush=True)
+                return True
+            except _UI_ERRORS:
+                continue
+    return False
+
+
+def _wait_turnstile_pass(page: Page, cfg: Config) -> bool:
+    """等待 token / 成功；若「正在验证…」则耐心等，切勿重填表单。"""
+    wait_total = max(10000, min(int(cfg.timeout_ms), 30000))
+    step = 500
+    waited = 0
+    saw_verifying = False
+    while waited < wait_total:
+        page.wait_for_timeout(step)
+        waited += step
+        if _turnstile_token_ready(page):
+            print(f"[信息] Cloudflare 人机验证已通过（token, {waited}ms）", flush=True)
+            return True
+        st = _turnstile_status(page)
+        if st == "success":
+            print(f"[信息] Cloudflare 人机验证已通过（成功文案, {waited}ms）", flush=True)
+            return True
+        if st == "verifying":
+            if not saw_verifying:
+                print("[信息] Turnstile 正在验证，等待结果（勿重填表单）…", flush=True)
+                saw_verifying = True
+            continue
+        if st in ("failed", "expired"):
+            print(f"[警告] Turnstile 状态={st}", flush=True)
+            return False
+    return bool(_turnstile_token_ready(page))
+
+
+def _pass_cloudflare_human_check(page: Page, cfg: Config) -> bool:
+    """
+    完成注册页 Cloudflare Turnstile。
+
+    关键修复：
+    - 禁止 turnstile.reset()（会把「正在验证」打回未勾选，又要重新验）
+    - 穿透 shadow 收集 iframe 坐标并点击左侧勾选区
+    - 若已在「正在验证…」只等待 token，不要整表重填
+    - 未通过时返回 False，调用方应避免强行点「完成注册」
+    """
+    if _turnstile_token_ready(page):
+        print("[信息] Turnstile token 已就绪", flush=True)
+        return True
+
+    st0 = _turnstile_status(page)
+    if st0 == "verifying":
+        print("[信息] 检测到 Turnstile 正在验证，等待完成…", flush=True)
+        return _wait_turnstile_pass(page, cfg)
+    if st0 == "success":
+        return True
+
+    # 等 widget 出现
+    for _ in range(18):
+        if _turnstile_token_ready(page):
+            return True
+        rects = _collect_turnstile_rects(page)
+        st = _turnstile_status(page)
+        if rects or st in ("ready", "unknown", "verifying"):
+            break
+        page.wait_for_timeout(350)
+    else:
+        rects = _collect_turnstile_rects(page)
+        if not rects and _turnstile_status(page) == "absent":
+            print("[信息] 未检测到 Turnstile，跳过人机验证", flush=True)
+            return True
+
+    print("[信息] 检测到 Cloudflare Turnstile，开始自动勾选…", flush=True)
+
+    # 1) frame 内点
+    clicked = _click_turnstile_in_frames(page, cfg)
+
+    # 2) shadow 穿透后的 iframe 坐标连点（主路径）
+    rects = _collect_turnstile_rects(page)
+    if rects:
+        print(f"[信息] 发现 {len(rects)} 个候选 Turnstile 区域，坐标点击…", flush=True)
+        for r in rects[:4]:
+            cx = float(r["x"]) + 26
+            cy = float(r["y"]) + float(r["h"]) / 2
+            try:
+                _mouse_click_point(page, cx, cy)
+                clicked = True
+                print(
+                    f"[信息] 坐标点击 @({cx:.0f},{cy:.0f}) via={r.get('via')}",
+                    flush=True,
+                )
+                page.wait_for_timeout(500)
+                st = _turnstile_status(page)
+                if st in ("verifying", "success") or _turnstile_token_ready(page):
+                    break
+            except _UI_ERRORS as exc:
+                print(f"[警告] 坐标点击异常：{exc}", flush=True)
+
+    # 3) frame_locator 兜底
+    if _turnstile_status(page) == "ready" or not clicked:
+        for sel in (
+            'iframe[src*="challenges.cloudflare.com"]',
+            'iframe[src*="turnstile"]',
+            'iframe[src*="cdn-cgi/challenge-platform"]',
+        ):
+            try:
+                if page.locator(sel).count() == 0:
+                    continue
+                fl = page.frame_locator(sel).first
+                for inner in ("label.dxeA5", "input[type='checkbox']", "span.YFbSK8"):
+                    try:
+                        fl.locator(inner).first.click(timeout=2000, force=True)
+                        clicked = True
+                        print(f"[信息] frame_locator 点击：{inner}", flush=True)
+                        break
+                    except _UI_ERRORS:
+                        continue
+            except _UI_ERRORS:
+                continue
+            if clicked:
+                break
+
+    st = _turnstile_status(page)
+    if st in ("verifying", "success") or _turnstile_token_ready(page):
+        print(f"[信息] Turnstile 状态={st}，进入等待", flush=True)
+
+    if _wait_turnstile_pass(page, cfg):
+        return True
+
+    # 再点一轮
+    rects = _collect_turnstile_rects(page)
+    if rects:
+        r = rects[0]
+        print("[信息] 再次坐标点击 Turnstile…", flush=True)
+        _mouse_click_point(page, float(r["x"]) + 26, float(r["y"]) + float(r["h"]) / 2)
+        if _wait_turnstile_pass(page, cfg):
+            return True
+
+    print(
+        "[警告] Turnstile 未在时限内通过；本轮不提交「完成注册」，"
+        "避免未验证提交导致白等/重置",
+        flush=True,
+    )
+    return False
+
+
+
 def _fill_complete_form_fields(
         page: Page,
         cfg: Config,
@@ -1064,6 +1398,7 @@ def _fill_complete_form_fields(
             pass
 
     _tick_optional_checkboxes(page)
+    # Turnstile 在提交前单独处理（此处不点，避免与提交前逻辑重复/打断）
 
     # 校验：至少一个密码框有完整值
     try:
@@ -1182,59 +1517,103 @@ def complete_registration(
 
     used_password = password
 
-    def _fill_and_submit(*, label: str, pw: str) -> None:
+    def _fill_form_only(*, label: str, pw: str) -> None:
         print(f"[信息] {label}…", flush=True)
         _fill_complete_form_fields(page, cfg, first_name, last_name, pw)
-        page.wait_for_timeout(max(100, cfg.after_otp_filled_ms))
-        _submit_complete_registration(page, cfg)
+        page.wait_for_timeout(max(300, cfg.after_otp_filled_ms))
 
-    _fill_and_submit(label="填写并提交完成注册表单", pw=used_password)
+    def _cf_then_submit() -> bool:
+        """
+        过人机后提交。Turnstile 未通过则不点「完成注册」，避免白点重置挑战。
+        返回是否已提交。
+        """
+        ok = _pass_cloudflare_human_check(page, cfg)
+        if not ok and _turnstile_status(page) not in ("absent", "success"):
+            # 仍卡在人机：再等一轮
+            st = _turnstile_status(page)
+            if st == "verifying":
+                ok = _wait_turnstile_pass(page, cfg)
+        if _turnstile_token_ready(page) or _turnstile_status(page) in (
+            "success",
+            "absent",
+        ):
+            _submit_complete_registration(page, cfg)
+            return True
+        if ok:
+            _submit_complete_registration(page, cfg)
+            return True
+        print("[警告] 人机未通过，暂不点击「完成注册」", flush=True)
+        return False
 
-    # 等待成功；必要时整表重填再提交（可换新密码）
-    poll_ms = 300
-    total_ms = max(10000, min(int(cfg.timeout_ms), 28000))
+    _fill_form_only(label="填写完成注册表单", pw=used_password)
+    _cf_then_submit()
+
+    # 等待成功；卡在表单时：优先只重做人机+提交，避免整表重填重置 Turnstile
+    poll_ms = 400
+    total_ms = max(18000, min(int(cfg.timeout_ms) + 10000, 45000))
     elapsed = 0
-    retry_count = 0
-    max_retries = 2
+    cf_only_retries = 0
+    full_retries = 0
     while elapsed <= total_ms:
         if registration_success_signal(page):
             print(f"[信息] 完成注册已生效 url={page.url!r}", flush=True)
             return used_password
         if not _password_form_visible(page) and not _is_signup_or_incomplete_url(
-                page.url or ""
+            page.url or ""
         ):
             print(f"[信息] 完成注册表单已离开 url={page.url!r}", flush=True)
             return used_password
 
-        if (
-                retry_count < max_retries
-                and elapsed >= 3000 * (retry_count + 1)
-                and _password_form_visible(page)
-        ):
-            err = _page_form_error_snippet(page)
-            if err:
-                print(f"[警告] 页面可能存在校验提示：{err}", flush=True)
-            # 第二次起换新密码，规避策略拒收 / 半写入
-            if retry_count >= 1 or (err and ("密码" in err or "password" in err.lower())):
-                used_password = random_password()
+        st = _turnstile_status(page)
+        # 正在验证：只等，绝不重填
+        if st == "verifying":
+            print("[信息] 人机验证进行中，继续等待…", flush=True)
+            page.wait_for_timeout(1000)
+            elapsed += 1000
+            continue
+
+        if _password_form_visible(page) and elapsed >= 3500:
+            # 1) 优先：只点人机 + 提交（最多 3 次）
+            if cf_only_retries < 3 and st in ("ready", "unknown", "failed", "expired"):
                 print(
-                    f"[信息] 使用新密码重试完成注册（len={len(used_password)}）…",
+                    f"[信息] 仅重试人机验证+提交（{cf_only_retries + 1}/3）…",
                     flush=True,
                 )
-            else:
-                print("[信息] 仍在完成注册表单，重新填写并再次提交…", flush=True)
-            try:
-                _fill_and_submit(label="重试完成注册", pw=used_password)
-            except _UI_ERRORS as exc:
-                print(f"[警告] 重试提交失败：{exc}", flush=True)
-            retry_count += 1
+                _cf_then_submit()
+                cf_only_retries += 1
+                page.wait_for_timeout(1200)
+                elapsed += 1200
+                continue
+
+            # 2) 仍失败：整表重填（可能丢 token，仅作兜底，最多 1 次）
+            if full_retries < 1:
+                err = _page_form_error_snippet(page)
+                if err:
+                    print(f"[警告] 页面可能存在校验提示：{err}", flush=True)
+                if err and ("密码" in err or "password" in err.lower() or "弱" in err):
+                    used_password = random_password()
+                    print(
+                        f"[信息] 使用新密码整表重填（len={len(used_password)}）…",
+                        flush=True,
+                    )
+                else:
+                    print("[信息] 整表重填并再次提交（兜底）…", flush=True)
+                _fill_form_only(label="重试填写完成注册表单", pw=used_password)
+                _cf_then_submit()
+                full_retries += 1
+                cf_only_retries = 0
+                page.wait_for_timeout(1200)
+                elapsed += 1200
+                continue
+
         page.wait_for_timeout(poll_ms)
         elapsed += poll_ms
 
     err = _page_form_error_snippet(page)
-    # 硬失败：避免再空等 settle/sso 几十秒
+    st = _turnstile_status(page)
     raise RuntimeError(
         f"完成注册提交后未进入账户页/未产生 sso，当前 url={page.url!r}"
+        + f"；turnstile={st}"
         + (f"；页面提示：{err}" if err else "")
     )
 
